@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+
+    <!-- SEGURANÇA: Content Security Policy via meta tag.
+         Restringe de onde o browser pode carregar recursos.
+         - default-src 'self'        → Apenas do mesmo domínio
+         - script-src 'self'         → Scripts apenas locais (bloqueia XSS injetado)
+         - style-src 'self' 'unsafe-inline' → Estilos locais + inline (necessário para React)
+         - connect-src 'self'        → Fetch/XHR apenas para o próprio domínio (API proxy)
+         - img-src 'self' data: https: → Imagens locais + data URIs + HTTPS externo
+         - font-src 'self' https://fonts.gstatic.com → Fontes do Google Fonts
+    -->
+    <meta http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; connect-src 'self'; img-src 'self' data: https:; font-src 'self' https://fonts.gstatic.com;" />
+
+    <!-- SEGURANÇA: Previne clickjacking caso servido diretamente -->
+    <meta http-equiv="X-Frame-Options" content="DENY" />
+
+    <!-- SEGURANÇA: Desativa detecção automática de formatos (telefone, email) -->
+    <meta name="format-detection" content="telephone=no" />
+
+    <!-- SEO base -->
+    <meta name="description" content="TypeD — Formulários dinâmicos de alta conversão" />
+    <title>TypeD</title>
+
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  </head>
+  <body>
+    <!-- noscript para SEO e acessibilidade -->
+    <noscript>Ative o JavaScript para utilizar o TypeD.</noscript>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

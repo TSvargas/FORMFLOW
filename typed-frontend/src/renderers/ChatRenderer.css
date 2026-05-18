@@ -1,0 +1,404 @@
+/* =============================================================================
+ * TypeD V2 — ChatRenderer Styles (Isolado)
+ * =============================================================================
+ * PREFIXO: .td-chat-*
+ * Todos os seletores usam o prefixo td-chat para garantir ZERO colisão
+ * com o SlideRenderer ou qualquer outro componente da aplicação.
+ *
+ * DESIGN: Interface de chat moderna inspirada em iMessage/WhatsApp Web,
+ * otimizada para conversão mobile.
+ * ============================================================================= */
+
+/* --- Container Principal --- */
+.td-chat-container {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh; /* dvh = dynamic viewport height (respeita barra de URL mobile) */
+  max-height: 100dvh;
+  background: #f0f2f5;
+  font-family: 'Segoe UI', system-ui, -apple-system, 'Helvetica Neue', sans-serif;
+  overflow: hidden;
+  position: relative;
+}
+
+/* --- Header --- */
+.td-chat-header {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem;
+  background: #ffffff;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  flex-shrink: 0;
+  z-index: 5;
+}
+
+.td-chat-header-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #6C63FF 0%, #8B5CF6 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: #fff;
+  font-weight: 700;
+  font-size: 1rem;
+}
+
+.td-chat-header-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.td-chat-header-name {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #1a1a2e;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.td-chat-header-status {
+  font-size: 0.75rem;
+  color: #22c55e;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.td-chat-header-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  display: inline-block;
+}
+
+/* --- Área de Mensagens (Scrollable) --- */
+.td-chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 1rem 1rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Scrollbar customizada */
+.td-chat-messages::-webkit-scrollbar {
+  width: 4px;
+}
+
+.td-chat-messages::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.td-chat-messages::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.12);
+  border-radius: 4px;
+}
+
+/* --- Balão Base --- */
+.td-chat-bubble {
+  max-width: 78%;
+  padding: 0.65rem 0.9rem;
+  border-radius: 18px;
+  line-height: 1.45;
+  font-size: 0.925rem;
+  word-wrap: break-word;
+  animation: td-chat-fadeInUp 0.3s ease-out;
+  position: relative;
+}
+
+/* --- Balão do Bot (esquerda) --- */
+.td-chat-bubble--bot {
+  align-self: flex-start;
+  background: #ffffff;
+  color: #1a1a2e;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+}
+
+/* --- Balão do Utilizador (direita) --- */
+.td-chat-bubble--user {
+  align-self: flex-end;
+  background: var(--td-accent, #6C63FF);
+  color: #ffffff;
+  border-bottom-right-radius: 4px;
+}
+
+/* --- Typing Indicator --- */
+.td-chat-typing {
+  align-self: flex-start;
+  background: #ffffff;
+  padding: 0.75rem 1.1rem;
+  border-radius: 18px;
+  border-bottom-left-radius: 4px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  animation: td-chat-fadeInUp 0.2s ease-out;
+}
+
+.td-chat-typing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #b0b3b8;
+  animation: td-chat-bounce 1.4s ease-in-out infinite;
+}
+
+.td-chat-typing-dot:nth-child(2) {
+  animation-delay: 0.2s;
+}
+
+.td-chat-typing-dot:nth-child(3) {
+  animation-delay: 0.4s;
+}
+
+/* --- Área de Input (Bottom) --- */
+.td-chat-input-area {
+  flex-shrink: 0;
+  padding: 0.75rem 1rem;
+  background: #ffffff;
+  border-top: 1px solid rgba(0, 0, 0, 0.06);
+  display: flex;
+  align-items: flex-end;
+  gap: 0.6rem;
+  z-index: 5;
+}
+
+.td-chat-input-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.td-chat-input-label {
+  font-size: 0.72rem;
+  color: #8c8c9a;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  padding-left: 0.25rem;
+}
+
+.td-chat-input-field {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: 1.5px solid #e4e6ea;
+  border-radius: 22px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #f8f9fa;
+  color: #1a1a2e;
+  box-sizing: border-box;
+  resize: none;
+}
+
+.td-chat-input-field:focus {
+  border-color: var(--td-accent, #6C63FF);
+  box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.1);
+  background: #ffffff;
+}
+
+.td-chat-input-field::placeholder {
+  color: #b0b3b8;
+}
+
+/* Textarea */
+.td-chat-input-field--textarea {
+  border-radius: 16px;
+  min-height: 60px;
+  max-height: 120px;
+  resize: vertical;
+}
+
+/* --- Botão de Envio --- */
+.td-chat-send-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: none;
+  background: var(--td-accent, #6C63FF);
+  color: #ffffff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: transform 0.1s, opacity 0.2s;
+  font-size: 1.1rem;
+}
+
+.td-chat-send-btn:hover {
+  opacity: 0.9;
+}
+
+.td-chat-send-btn:active {
+  transform: scale(0.92);
+}
+
+.td-chat-send-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  transform: none;
+}
+
+/* --- Chips/Buttons para INPUT_SELECT e INPUT_BUTTONS --- */
+.td-chat-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.5rem 0;
+  animation: td-chat-fadeInUp 0.3s ease-out;
+}
+
+.td-chat-option-btn {
+  padding: 0.55rem 1.1rem;
+  border-radius: 20px;
+  border: 1.5px solid #e4e6ea;
+  background: #ffffff;
+  color: #1a1a2e;
+  font-size: 0.88rem;
+  font-family: inherit;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.td-chat-option-btn:hover {
+  border-color: var(--td-accent, #6C63FF);
+  background: rgba(108, 99, 255, 0.05);
+  color: var(--td-accent, #6C63FF);
+}
+
+.td-chat-option-btn:active {
+  transform: scale(0.96);
+}
+
+/* --- Tela Final / Completed --- */
+.td-chat-completed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  padding: 2rem;
+  text-align: center;
+  animation: td-chat-fadeInUp 0.5s ease-out;
+}
+
+.td-chat-completed-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #22c55e 0%, #16a34a 100%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 1.25rem;
+  font-size: 1.8rem;
+  color: #fff;
+}
+
+.td-chat-completed h2 {
+  font-size: 1.3rem;
+  color: #1a1a2e;
+  margin: 0 0 0.5rem 0;
+}
+
+.td-chat-completed p {
+  font-size: 0.95rem;
+  color: #8c8c9a;
+  margin: 0;
+}
+
+/* --- Loading --- */
+.td-chat-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  flex-direction: column;
+  gap: 1rem;
+  color: #8c8c9a;
+  font-size: 0.95rem;
+}
+
+.td-chat-spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #e4e6ea;
+  border-top-color: var(--td-accent, #6C63FF);
+  border-radius: 50%;
+  animation: td-chat-spin 0.7s linear infinite;
+}
+
+/* --- Error --- */
+.td-chat-error {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100dvh;
+  flex-direction: column;
+  gap: 0.75rem;
+  color: #8c8c9a;
+  font-size: 0.95rem;
+  padding: 2rem;
+  text-align: center;
+}
+
+/* --- Animações --- */
+@keyframes td-chat-fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes td-chat-bounce {
+  0%, 60%, 100% {
+    transform: translateY(0);
+  }
+  30% {
+    transform: translateY(-5px);
+  }
+}
+
+@keyframes td-chat-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* --- Mobile Optimizations --- */
+@media (max-width: 480px) {
+  .td-chat-bubble {
+    max-width: 85%;
+    font-size: 0.9rem;
+  }
+
+  .td-chat-input-field {
+    font-size: 16px; /* Previne zoom automático no iOS */
+  }
+
+  .td-chat-header {
+    padding: 0.75rem 1rem;
+  }
+}

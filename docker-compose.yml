@@ -1,0 +1,134 @@
+# =============================================================================
+# TypeD V2 — Docker Compose (Produção / VPS Ubuntu)
+# =============================================================================
+# Arquitetura de serviços:
+#   1. typed-db        → PostgreSQL 16 com volume persistente
+#   2. typed-api        → Backend Fastify (porta 4012)
+#   3. typed-frontend   → Frontend React/Vite (porta 3000)
+#
+# Redes:
+#   - typed-internal   → Comunicação privada entre API ↔ DB (isolada)
+#   - typed-public     → Comunicação API ↔ Frontend (exposta ao host)
+#
+# Uso:
+#   docker compose up -d --build
+#   docker compose logs -f typed-api
+# =============================================================================
+
+version: "3.9"
+
+# ---------------------------------------------------------------------------
+# VOLUMES PERSISTENTES
+# ---------------------------------------------------------------------------
+# O volume nomeado garante que os dados do PostgreSQL sobrevivam a
+# rebuilds e restarts dos containers. NUNCA use bind-mount para dados
+# de banco em produção — volumes nomeados são gerenciados pelo Docker
+# e oferecem melhor performance e segurança.
+# ---------------------------------------------------------------------------
+volumes:
+  typed_pgdata:
+    driver: local
+
+# ---------------------------------------------------------------------------
+# REDES — Isolamento de Responsabilidade
+# ---------------------------------------------------------------------------
+# typed-internal: Apenas DB ↔ API. O frontend NUNCA acessa o banco diretamente.
+# typed-public:   API ↔ Frontend. Ambos expostos ao host para acesso externo
+#                 (geralmente via Nginx reverse proxy na VPS).
+# ---------------------------------------------------------------------------
+networks:
+  typed-internal:
+    driver: bridge
+  typed-public:
+    driver: bridge
+
+# ---------------------------------------------------------------------------
+# SERVIÇOS
+# ---------------------------------------------------------------------------
+services:
+
+  # =========================================================================
+  # 1. BANCO DE DADOS — PostgreSQL 16
+  # =========================================================================
+  # Escolhemos PostgreSQL 16 (Alpine) por:
+  #   - Suporte nativo a JSON/JSONB para payloads flexíveis
+  #   - Concorrência MVCC real (vs. SQLite single-writer lock)
+  #   - Full-text search nativo (futuro: busca em submissions)
+  #   - Row-Level Security (futuro: multi-tenancy no nível do DB)
+  # =========================================================================
+  typed-db:
+    image: postgres:16-alpine
+    container_name: typed-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-typed_admin}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-typed_v2}
+    volumes:
+      - typed_pgdata:/var/lib/postgresql/data
+    ports:
+      # Expõe apenas para debug local; em produção, remova ou restrinja via firewall.
+      - "${POSTGRES_PORT:-5432}:5432"
+    networks:
+      - typed-internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-typed_admin} -d ${POSTGRES_DB:-typed_v2}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # =========================================================================
+  # 2. BACKEND — Fastify API (porta 4012)
+  # =========================================================================
+  # O serviço da API só inicia APÓS o banco estar healthy (depends_on).
+  # A DATABASE_URL é construída dinamicamente apontando para o hostname
+  # interno do Docker (typed-db), não para localhost.
+  # =========================================================================
+  typed-api:
+    build:
+      context: ./typed-api
+      dockerfile: Dockerfile
+    container_name: typed-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-4012}:4012"
+    environment:
+      NODE_ENV: production
+      PORT: 4012
+      DATABASE_URL: "postgresql://${POSTGRES_USER:-typed_admin}:${POSTGRES_PASSWORD}@typed-db:5432/${POSTGRES_DB:-typed_v2}?schema=public"
+      JWT_SECRET: ${JWT_SECRET:?Defina JWT_SECRET no .env}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+    depends_on:
+      typed-db:
+        condition: service_healthy
+    networks:
+      - typed-internal   # Acessa o banco de dados
+      - typed-public     # Recebe requests do frontend e do mundo externo
+    volumes:
+      # Volume para uploads persistentes (imagens de branding, etc.)
+      - ./typed-api/uploads:/app/uploads
+
+  # =========================================================================
+  # 3. FRONTEND — React/Vite (porta 3000)
+  # =========================================================================
+  # Em produção, o frontend é servido como arquivos estáticos via Nginx
+  # dentro do próprio container (multi-stage build no Dockerfile).
+  # Ele se comunica com a API pela rede typed-public.
+  # =========================================================================
+  typed-frontend:
+    build:
+      context: ./typed-frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:4012}
+    container_name: typed-frontend
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    environment:
+      NODE_ENV: production
+    depends_on:
+      - typed-api
+    networks:
+      - typed-public     # Apenas rede pública — SEM acesso ao banco

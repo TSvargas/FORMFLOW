@@ -1,0 +1,333 @@
+// =============================================================================
+// TypeD V2 — Schema Prisma (Fundação Multi-Tenant)
+// =============================================================================
+//
+// FILOSOFIA ARQUITETURAL:
+// Este schema implementa Multi-Tenancy via "Workspace ID Foreign Key".
+// Cada recurso (Form, Submission) pertence a um Workspace (Tenant).
+// Toda query da aplicação DEVE filtrar pelo workspaceId do usuário autenticado.
+//
+// Futuramente, podemos adicionar Row-Level Security (RLS) no PostgreSQL
+// como camada extra de segurança, mas a filtragem por FK é o padrão
+// mais comum e performante para SaaS de médio porte.
+//
+// IDs: Usamos UUID v4 como chave primária em todas as tabelas para:
+//   - Evitar colisões em ambientes distribuídos
+//   - Não expor contagem sequencial (segurança)
+//   - Facilitar merges e migrações futuras
+//
+// =============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../typed-api/node_modules/.prisma/client"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// ENUMS
+// =============================================================================
+
+/// Modo de exibição do formulário para o usuário final.
+/// CHAT  → Interface conversacional sequencial com delay de digitação.
+/// SLIDE → Uma pergunta centralizada por tela (estilo Typeform/RespondiApp).
+///
+/// DECISÃO ARQUITETURAL: Usamos ENUM no banco (não string) para garantir
+/// integridade referencial. Novos modos futuros (ex: WIZARD, EMBED) são
+/// adicionados apenas com uma migration — isso é INTENCIONAL para forçar
+/// revisão consciente de cada novo modo no backend e frontend.
+enum DisplayMode {
+  CHAT
+  SLIDE
+}
+
+/// Tipo de cada bloco de pergunta dentro do formulário.
+/// Manter como ENUM garante que o backend sempre valide
+/// os tipos aceitos, evitando blocos "fantasma" por typo no JSON.
+enum BlockType {
+  TEXT           // Mensagem do bot (não-input)
+  WAIT           // Pausa/delay artificial
+  INPUT_TEXT     // Campo de texto livre
+  INPUT_EMAIL    // Campo de email com validação
+  INPUT_PHONE    // Campo de telefone
+  INPUT_TEXTAREA // Campo de texto longo
+  INPUT_SELECT   // Dropdown de opções
+  INPUT_BUTTONS  // Botões de seleção (sim/não, múltipla escolha)
+  INPUT_NUMBER   // Campo numérico
+  INPUT_DATE     // Seletor de data
+  INPUT_FILE     // Upload de arquivo
+  WEBHOOK        // Disparo de webhook intermediário
+  REDIRECT       // Redirecionamento (WhatsApp, URL externa)
+  END_SCREEN     // Tela final / agradecimento
+}
+
+/// Role do usuário dentro de um Workspace.
+/// OWNER pode tudo; ADMIN gerencia forms; MEMBER apenas visualiza.
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+// =============================================================================
+// MODEL: Workspace (Tenant / Inquilino)
+// =============================================================================
+// Representa a unidade de isolamento multi-tenant. Uma agência, marca ou
+// empresa. Todos os recursos (formulários, leads) pertencem a um Workspace.
+//
+// O campo `slug` é a chave pública para URLs amigáveis (ex: /ws/minha-agencia).
+// O campo `settings` (JSONB) armazena configurações globais flexíveis como
+// limites de formulários, features habilitadas, plano de assinatura, etc.
+// Usar JSONB aqui evita migrations para cada nova feature flag.
+// =============================================================================
+model Workspace {
+  id        String   @id @default(uuid())
+  name      String   @db.VarChar(100)
+  slug      String   @unique @db.VarChar(60)
+  
+  /// Configurações globais do tenant (limites, feature flags, plano).
+  /// Exemplo: { "maxForms": 10, "plan": "pro", "features": ["webhooks"] }
+  settings  Json     @default("{}")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // --- Relações ---
+  members   WorkspaceMember[]
+  forms     Form[]
+
+  @@map("workspaces")
+}
+
+// =============================================================================
+// MODEL: User (Usuário da Plataforma)
+// =============================================================================
+// Representa uma pessoa física que acessa o painel administrativo.
+// Um User pode pertencer a MÚLTIPLOS Workspaces (agências diferentes),
+// e um Workspace pode ter MÚLTIPLOS Users (equipe).
+//
+// DECISÃO ARQUITETURAL (N:N via tabela pivot):
+// Usamos a tabela WorkspaceMember como pivot ao invés de relação 1:N direta
+// porque no modelo SaaS é comum:
+//   - Um freelancer gerenciar forms de várias agências
+//   - Uma agência ter múltiplos operadores
+//   - Cada membro ter um ROLE diferente por workspace
+// A tabela pivot WorkspaceMember resolve tudo isso elegantemente.
+// =============================================================================
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique @db.VarChar(255)
+  name         String   @db.VarChar(100)
+  passwordHash String   @db.VarChar(255)
+  avatarUrl    String?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  // --- Relações ---
+  workspaces   WorkspaceMember[]
+
+  @@map("users")
+}
+
+// =============================================================================
+// MODEL: WorkspaceMember (Tabela Pivot — User ↔ Workspace)
+// =============================================================================
+// Materializa a relação N:N entre User e Workspace, adicionando
+// metadados contextuais (role, data de entrada).
+//
+// A constraint @@unique garante que um user não pode ter dois registros
+// no mesmo workspace (evita duplicação de membership).
+// =============================================================================
+model WorkspaceMember {
+  id          String        @id @default(uuid())
+  role        WorkspaceRole @default(MEMBER)
+
+  userId      String
+  workspaceId String
+
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  workspace   Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  joinedAt    DateTime  @default(now())
+
+  @@unique([userId, workspaceId])
+  @@index([workspaceId])
+  @@map("workspace_members")
+}
+
+// =============================================================================
+// MODEL: Form (Formulário)
+// =============================================================================
+// O recurso central da plataforma. Cada Form pertence a um Workspace
+// e define um formulário completo que pode ser publicado e respondido.
+//
+// CAMPOS CHAVE:
+// - slug: Identificador público para a URL de resposta (ex: typed.io/f/meu-form)
+// - displayMode: CHAT ou SLIDE — define como o frontend renderiza
+// - branding: JSONB com configurações visuais isoladas por form
+//   Exemplo: { "primaryColor": "#E5C05E", "fontFamily": "Inter", "logoUrl": "..." }
+// - isPublished: Controla se o form está acessível publicamente
+//
+// O @@unique([workspaceId, slug]) garante que slugs são únicos DENTRO
+// de um workspace, mas dois workspaces diferentes podem ter o mesmo slug.
+// =============================================================================
+model Form {
+  id          String      @id @default(uuid())
+  name        String      @db.VarChar(150)
+  slug        String      @db.VarChar(100)
+  description String?     @db.VarChar(500)
+
+  displayMode DisplayMode @default(CHAT)
+  isPublished Boolean     @default(false)
+
+  /// Configurações visuais isoladas por formulário.
+  /// Isso permite que cada form tenha sua própria identidade visual
+  /// sem afetar outros forms do mesmo workspace.
+  branding    Json        @default("{}")
+
+  /// Configurações de comportamento do formulário.
+  /// Ex: { "typingDelay": 1500, "showProgressBar": true }
+  settings    Json        @default("{}")
+
+  workspaceId String
+
+  workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // --- Relações ---
+  blocks      FormBlock[]
+  submissions Submission[]
+
+  @@unique([workspaceId, slug])
+  @@index([workspaceId])
+  @@index([isPublished])
+  @@map("forms")
+}
+
+// =============================================================================
+// MODEL: FormBlock (Bloco de Pergunta — Tabela Relacional)
+// =============================================================================
+//
+// ╔═══════════════════════════════════════════════════════════════════════════╗
+// ║  DECISÃO ARQUITETURAL CRÍTICA: Tabela Relacional vs. JSON (flowData)    ║
+// ╠═══════════════════════════════════════════════════════════════════════════╣
+// ║                                                                         ║
+// ║  OPÇÃO A — JSON flowData no Form (como era no V1):                      ║
+// ║  ✓ Fácil de manipular no frontend (drag-and-drop salva array inteiro)   ║
+// ║  ✗ Impossível fazer queries SQL sobre blocos individuais                ║
+// ║  ✗ Sem integridade referencial (blocos "fantasma" sem validação)        ║
+// ║  ✗ Sem índices — performance degrada em forms com 100+ blocos          ║
+// ║  ✗ Concorrência: dois admins editando = last-write-wins (perda de dado)║
+// ║                                                                         ║
+// ║  OPÇÃO B — Tabela FormBlock relacional (ESCOLHIDA): ★                  ║
+// ║  ✓ Queries analíticas sobre blocos (ex: "quantos forms usam webhook?") ║
+// ║  ✓ Integridade via FK + ENUM BlockType — impossível salvar lixo        ║
+// ║  ✓ Índices nativos no `order` para ordenação performática              ║
+// ║  ✓ Concorrência: edições granulares por bloco (sem conflito total)     ║
+// ║  ✓ Versionamento futuro: fácil adicionar "block history"              ║
+// ║  △ Drag-and-drop requer reordenar `order` de múltiplos blocos (update  ║
+// ║    batch — custo aceitável vs. benefícios acima)                       ║
+// ║                                                                         ║
+// ║  CONCLUSÃO: Em um SaaS multi-tenant, integridade e queryability        ║
+// ║  superam a conveniência de um JSON monolítico. O custo de reordenar    ║
+// ║  blocos é trivial com um UPDATE batch no Prisma.                       ║
+// ╚═══════════════════════════════════════════════════════════════════════════╝
+//
+// O campo `order` (Int) define a sequência de exibição.
+// O campo `config` (JSONB) armazena opções específicas de cada tipo de bloco:
+//   - INPUT_SELECT → { "options": ["Opção A", "Opção B"] }
+//   - INPUT_BUTTONS → { "buttons": [{"label": "Sim", "value": "yes"}] }
+//   - TEXT → { "message": "Olá! Como posso ajudar?" }
+//   - WEBHOOK → { "url": "https://...", "method": "POST" }
+//
+// Usar JSONB para `config` dá flexibilidade para cada BlockType ter
+// seu próprio schema de configuração sem precisar de colunas nullable.
+// =============================================================================
+model FormBlock {
+  id       String    @id @default(uuid())
+  type     BlockType
+  order    Int       // Posição sequencial no fluxo (0, 1, 2, ...)
+
+  /// Configuração específica do tipo de bloco (JSONB).
+  /// O schema do JSON varia por BlockType e é validado no backend.
+  config   Json      @default("{}")
+
+  /// Label opcional para identificação no painel admin.
+  /// Ex: "Pergunta Nome", "Mensagem de Boas-vindas"
+  label    String?   @db.VarChar(200)
+
+  /// Se true, o usuário final DEVE responder antes de avançar.
+  required Boolean   @default(true)
+
+  formId   String
+  form     Form      @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([formId, order])
+  @@map("form_blocks")
+}
+
+// =============================================================================
+// MODEL: Submission (Lead / Resposta)
+// =============================================================================
+// Cada submission é uma resposta completa (ou parcial) de um usuário final
+// a um formulário publicado.
+//
+// CAMPOS:
+// - payload (JSONB): As respostas brutas, indexadas pelo blockId ou variável.
+//   Exemplo: { "nome": "João", "email": "j@x.com", "telefone": "11999..." }
+//
+// - metadata (JSONB): Dados de captação automáticos, coletados pelo frontend.
+//   Exemplo: {
+//     "utm_source": "google",
+//     "utm_medium": "cpc",
+//     "utm_campaign": "black-friday",
+//     "browser": "Chrome 120",
+//     "os": "Android 14",
+//     "ip": "189.x.x.x",
+//     "referrer": "https://google.com",
+//     "language": "pt-BR",
+//     "screenResolution": "1080x2400"
+//   }
+//
+// - isComplete: Diferencia leads completos de abandonos parciais.
+//   Útil para analytics de funil (taxa de conclusão por step).
+//
+// - completedAt: Null se abandonou; preenchido ao concluir o último bloco.
+//   Separado do createdAt para medir duração de preenchimento.
+// =============================================================================
+model Submission {
+  id          String    @id @default(uuid())
+
+  /// Respostas brutas do lead (JSONB).
+  payload     Json      @default("{}")
+
+  /// Metadados de captação: UTMs, browser, OS, IP, referrer, etc.
+  metadata    Json      @default("{}")
+
+  /// Indica se o lead completou todo o formulário.
+  isComplete  Boolean   @default(false)
+
+  formId      String
+  form        Form      @relation(fields: [formId], references: [id], onDelete: Cascade)
+
+  /// Timestamp de criação (quando o lead iniciou o preenchimento).
+  createdAt   DateTime  @default(now())
+
+  /// Timestamp de conclusão (null = abandono / em andamento).
+  completedAt DateTime?
+
+  @@index([formId])
+  @@index([formId, isComplete])
+  @@index([createdAt])
+  @@map("submissions")
+}

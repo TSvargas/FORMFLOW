@@ -1,0 +1,28 @@
+# Ambiente
+.env
+*.env.local
+
+# Dependências
+node_modules/
+
+# Build
+dist/
+.next/
+
+# Prisma
+prisma/*.db
+prisma/*.db-journal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+
+# Docker volumes locais
+pgdata/
+
+# Uploads (produção gerenciado por volume Docker)
+typed-api/uploads/

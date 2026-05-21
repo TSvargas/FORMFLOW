@@ -275,9 +275,22 @@ export default function ChatRenderer() {
   const typingDelay = formConfig?.settings?.typingDelay ?? 500;
 
   // -------------------------------------------------------------------------
-  // BRANDING: Aplicar cor de acento via CSS variable
+  // BRANDING: Aplicar variáveis CSS dinâmicas do branding
   // -------------------------------------------------------------------------
-  const accentColor = formConfig?.branding?.primaryColor || '#6C63FF';
+  const branding = formConfig?.branding || {};
+  const accentColor = branding.primaryColor || '#6C63FF';
+  const textColor = branding.textColor || '#1a1a2e';
+  const secondaryColor = branding.secondaryColor || '#ffffff';
+  const fontFamily = branding.fontFamily || '';
+  const avatarUrl = branding.avatarUrl || '';
+  const API_BASE = import.meta.env.VITE_API_URL || '';
+
+  const brandingVars = {
+    '--td-accent': accentColor,
+    '--td-text': textColor,
+    '--td-secondary': secondaryColor,
+    ...(fontFamily ? { '--td-font': `"${fontFamily}", sans-serif` } : {}),
+  };
 
   // -------------------------------------------------------------------------
   // AUTO-SCROLL: Rola suavemente para a última mensagem
@@ -483,7 +496,7 @@ export default function ChatRenderer() {
 
   if (status === 'loading' || status === 'idle') {
     return (
-      <div className="td-chat-loading" style={{ '--td-accent': accentColor }}>
+      <div className="td-chat-loading" style={brandingVars}>
         <div className="td-chat-spinner" />
         <span>Carregando...</span>
       </div>
@@ -505,7 +518,7 @@ export default function ChatRenderer() {
     const message = endBlock?.config?.message || 'Obrigado por completar o formulário.';
 
     return (
-      <div className="td-chat-container" style={{ '--td-accent': accentColor }}>
+      <div className="td-chat-container" style={brandingVars}>
         <div className="td-chat-completed">
           <div className="td-chat-completed-icon">✓</div>
           <h2>{title}</h2>
@@ -521,11 +534,15 @@ export default function ChatRenderer() {
   const headerInitial = (formConfig?.name || 'T').charAt(0).toUpperCase();
 
   return (
-    <div className="td-chat-container" style={{ '--td-accent': accentColor }}>
+    <div className="td-chat-container" style={brandingVars}>
       {/* Header */}
       <div className="td-chat-header">
         <div className="td-chat-header-avatar">
-          {headerInitial}
+          {avatarUrl ? (
+            <img src={avatarUrl.startsWith('/') ? `${API_BASE}${avatarUrl}` : avatarUrl} alt={formConfig?.name || 'Bot'} />
+          ) : (
+            headerInitial
+          )}
         </div>
         <div className="td-chat-header-info">
           <span className="td-chat-header-name">{formConfig?.name || 'TypeD'}</span>

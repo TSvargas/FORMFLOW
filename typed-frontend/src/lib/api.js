@@ -267,3 +267,31 @@ export function discardDraft(workspaceId, formId, signal) {
     signal,
   });
 }
+
+// =============================================================================
+// MÉTODOS DE BRANDING & UPLOAD
+// =============================================================================
+
+export async function uploadFile(workspaceId, file, signal) {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const response = await fetch(`${API_BASE}/api/workspaces/${workspaceId}/upload`, {
+    method: 'POST',
+    body: formData,
+    signal,
+    credentials: 'omit', // Não enviamos cookies
+  });
+
+  if (!response.ok) {
+    let errorData = {};
+    try {
+      errorData = await response.json();
+    } catch (e) {
+      // Ignorar se não for JSON
+    }
+    throw new ApiError(errorData.message || `Erro HTTP ${response.status}`, response.status, errorData);
+  }
+
+  return response.json();
+}

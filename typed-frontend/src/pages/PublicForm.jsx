@@ -17,6 +17,7 @@
 //
 // =============================================================================
 
+import { useEffect } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { FormEngineProvider, useFormEngine } from '../context/FormEngineProvider.jsx';
 import ChatRenderer from '../renderers/ChatRenderer.jsx';
@@ -31,6 +32,20 @@ import SlideRenderer from '../renderers/SlideRenderer.jsx';
 // =============================================================================
 function FormRouter() {
   const { status, formConfig, error } = useFormEngine();
+
+  // Carregar a fonte dinamicamente se existir no branding
+  useEffect(() => {
+    const fontFamily = formConfig?.branding?.fontFamily;
+    if (fontFamily) {
+      const link = document.createElement('link');
+      link.href = `https://fonts.googleapis.com/css2?family=${fontFamily.replace(/ /g, '+')}:wght@400;500;600;700&display=swap`;
+      link.rel = 'stylesheet';
+      document.head.appendChild(link);
+      return () => {
+        document.head.removeChild(link);
+      };
+    }
+  }, [formConfig?.branding?.fontFamily]);
 
   // --- Estado: Carregando ---
   if (status === 'loading' || status === 'idle') {
@@ -55,21 +70,48 @@ function FormRouter() {
 
   // --- Estado: Formulário carregado ou Concluído — rotear por displayMode ---
   if (status === 'ready' || status === 'submitting' || status === 'completed') {
-    switch (formConfig?.displayMode) {
-      case 'CHAT':
-        return <ChatRenderer />;
+    const branding = formConfig?.branding || {};
+    const API_BASE = import.meta.env.VITE_API_URL || '';
+    
+    // Injeção de CSS Dinâmico com Variáveis
+    const wrapperStyle = {
+      '--td-accent': branding.primaryColor || '#6C63FF',
+      '--td-text': branding.textColor || '#1a1a2e',
+      '--td-secondary': branding.secondaryColor || '#ffffff',
+      fontFamily: branding.fontFamily ? `"${branding.fontFamily}", sans-serif` : undefined,
+      width: '100%',
+      minHeight: '100vh',
+      backgroundColor: branding.backgroundColor || '#f0f2f5',
+    };
 
-      case 'SLIDE':
-        return <SlideRenderer />;
-
-      default:
-        // Fallback seguro — se o displayMode for desconhecido, usa CHAT.
-        // Isso garante que o lead nunca vê uma página em branco.
-        console.warn(
-          `[TypeD] DisplayMode desconhecido: "${formConfig?.displayMode}". Usando CHAT como fallback.`
-        );
-        return <ChatRenderer />;
+    // Propagar fonte como CSS variable para componentes filhos (ChatRenderer, etc.)
+    if (branding.fontFamily) {
+      wrapperStyle['--td-font'] = `"${branding.fontFamily}", sans-serif`;
     }
+
+    if (branding.backgroundImage) {
+      const bgUrl = `url(${API_BASE}${branding.backgroundImage})`;
+      wrapperStyle['--td-bg-image'] = bgUrl;
+      wrapperStyle.backgroundImage = bgUrl;
+      wrapperStyle.backgroundSize = 'cover';
+      wrapperStyle.backgroundPosition = 'center';
+      wrapperStyle.backgroundRepeat = 'no-repeat';
+    }
+
+    let Renderer = ChatRenderer;
+    if (formConfig?.displayMode === 'SLIDE') {
+      Renderer = SlideRenderer;
+    } else if (formConfig?.displayMode !== 'CHAT') {
+      console.warn(
+        `[TypeD] DisplayMode desconhecido: "${formConfig?.displayMode}". Usando CHAT como fallback.`
+      );
+    }
+
+    return (
+      <div style={wrapperStyle}>
+        <Renderer />
+      </div>
+    );
   }
 
   return null;

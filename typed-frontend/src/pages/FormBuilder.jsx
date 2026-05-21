@@ -13,7 +13,8 @@ import {
   updateForm,
   publishForm,
   unpublishForm,
-  discardDraft
+  discardDraft,
+  uploadFile
 } from '../lib/api.js';
 
 const WORKSPACE_ID = "ws-mock-123";
@@ -197,6 +198,25 @@ export default function FormBuilder() {
     }
   }
 
+  async function handleSaveFormBranding() {
+    setIsSaving(true);
+    try {
+      await updateForm(WORKSPACE_ID, formId, {
+        branding: form.branding
+      });
+      setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
+    } catch (err) {
+      alert(`Erro ao salvar branding: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  // Helper: Validar hex color
+  function isValidHex(hex) {
+    return /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6})$/.test(hex);
+  }
+
   // ===========================================================================
   // AÇÕES DO FORMULÁRIO
   // ===========================================================================
@@ -262,24 +282,26 @@ export default function FormBuilder() {
       <header style={styles.header}>
         <div style={styles.headerLeft}>
           <button style={styles.backButton} onClick={() => navigate('/admin')}>
-            ← Voltar
+            &larr; Voltar
           </button>
           <div>
-            <h1 style={styles.title}>{form?.name}</h1>
-            <p style={styles.subtitle}>/f/{form?.slug} • {form?.displayMode}</p>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+              <h1 style={styles.title}>{form?.name}</h1>
+              {/* STATUS BADGE MOVIDO PARA CÁ */}
+              {form?.isPublished && !form?.hasUnpublishedChanges && (
+                <span style={styles.statusBadgeOk}>✓ Produção atualizada</span>
+              )}
+              {form?.isPublished && form?.hasUnpublishedChanges && (
+                <span style={styles.statusBadgeDraft}>● Rascunho pendente</span>
+              )}
+              {!form?.isPublished && (
+                <span style={styles.statusBadgeOffline}>○ Offline</span>
+              )}
+            </div>
+            <p style={styles.subtitle}>/f/{form?.slug} &bull; {form?.displayMode}</p>
           </div>
         </div>
-        <div style={{display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap'}}>
-          {/* STATUS BADGE */}
-          {form?.isPublished && !form?.hasUnpublishedChanges && (
-            <span style={styles.statusBadgeOk}>✓ Produção atualizada</span>
-          )}
-          {form?.isPublished && form?.hasUnpublishedChanges && (
-            <span style={styles.statusBadgeDraft}>● Rascunho pendente</span>
-          )}
-          {!form?.isPublished && (
-            <span style={styles.statusBadgeOffline}>○ Offline</span>
-          )}
+        <div style={{display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end'}}>
 
           {/* SHARE LINK (só quando publicado) */}
           {form?.isPublished && (
@@ -350,11 +372,13 @@ export default function FormBuilder() {
             </button>
           )}
 
+          <div style={{ width: '1px', height: '24px', backgroundColor: '#eaeaea', margin: '0 0.25rem' }}></div>
+
           <a 
             href={`/f/${form?.slug}?preview=true`} 
             target="_blank" 
             rel="noreferrer"
-            style={styles.primaryButton}
+            style={{ ...styles.primaryButton, backgroundColor: '#4f46e5' }}
           >
             Pré-visualizar
           </a>
@@ -410,7 +434,7 @@ export default function FormBuilder() {
         </aside>
 
         {/* ÁREA CENTRAL: Fluxo do Formulário */}
-        <main style={styles.mainContent}>
+        <main style={styles.mainContent} onClick={() => setSelectedBlockId(null)}>
           <div style={styles.flowContainer}>
             {blocks.length === 0 ? (
               <div style={styles.emptyFlow}>
@@ -424,7 +448,7 @@ export default function FormBuilder() {
                     ...styles.flowBlock, 
                     ...(selectedBlockId === block.id ? styles.flowBlockActive : {})
                   }}
-                  onClick={() => setSelectedBlockId(block.id)}
+                  onClick={(e) => { e.stopPropagation(); setSelectedBlockId(block.id); }}
                 >
                   <div style={styles.flowBlockHeader}>
                     <span style={styles.blockTypeBadge}>{block.type}</span>
@@ -462,8 +486,17 @@ export default function FormBuilder() {
         <aside style={styles.rightSidebar}>
           {selectedBlock ? (
             <div style={styles.settingsPanel}>
-              <h3 style={styles.sidebarTitle}>Configurações do Bloco</h3>
-              <p style={{fontSize: '0.8rem', color: '#666', marginBottom: '1.5rem'}}>
+              <div style={styles.settingsPanelHeader}>
+                <h3 style={{...styles.sidebarTitle, margin: 0}}>Configurações do Bloco</h3>
+                <button
+                  style={styles.closePanelBtn}
+                  onClick={() => setSelectedBlockId(null)}
+                  title="Fechar edição do bloco"
+                >
+                  ✕
+                </button>
+              </div>
+              <p style={{fontSize: '0.8rem', color: '#666', marginBottom: '1.5rem', marginTop: '0.5rem'}}>
                 Tipo: <strong>{selectedBlock.type}</strong>
               </p>
 
@@ -636,8 +669,378 @@ export default function FormBuilder() {
               </div>
             </div>
           ) : (
-            <div style={styles.emptySettings}>
-              Selecione um bloco no fluxo para editar as suas configurações.
+            <div style={styles.settingsPanel}>
+              <h3 style={{...styles.sidebarTitle, wordWrap: 'break-word', overflowWrap: 'break-word'}}>Configurações Globais / Visual</h3>
+              <p style={{fontSize: '0.8rem', color: '#666', marginBottom: '1.5rem'}}>
+                Aparência (Branding)
+              </p>
+
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Imagem de Fundo</label>
+                <input 
+                  type="file" 
+                  accept="image/*"
+                  onChange={async (e) => {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    setIsSaving(true);
+                    try {
+                      const res = await uploadFile(WORKSPACE_ID, file);
+                      const updatedBranding = { ...(form?.branding || {}), backgroundImage: res.url };
+                      setForm(prev => ({ ...prev, branding: updatedBranding, hasUnpublishedChanges: true }));
+                      await updateForm(WORKSPACE_ID, formId, { branding: updatedBranding });
+                    } catch (err) {
+                      alert(`Erro no upload: ${err.message}`);
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }}
+                  style={{ ...styles.input, padding: '0.3rem' }}
+                />
+                {form?.branding?.backgroundImage && (
+                  <img 
+                    src={import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}${form.branding.backgroundImage}` : form.branding.backgroundImage} 
+                    alt="Preview de Fundo" 
+                    style={{ width: '100%', marginTop: '10px', borderRadius: '6px', objectFit: 'cover', maxHeight: '120px' }} 
+                  />
+                )}
+              </div>
+
+              {/* COR DE FUNDO (Fallback) — Bidirecional */}
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Cor de Fundo (Padrão)</label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input 
+                    type="color"
+                    value={form?.branding?.backgroundColor || '#f0f2f5'}
+                    onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, backgroundColor: e.target.value } }))}
+                    onBlur={() => handleSaveFormBranding()}
+                    style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                  />
+                  <input 
+                    type="text"
+                    value={form?.branding?.backgroundColor || '#f0f2f5'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm(prev => ({ ...prev, branding: { ...prev.branding, backgroundColor: val } }));
+                    }}
+                    onBlur={(e) => {
+                      const val = e.target.value;
+                      if (!isValidHex(val)) {
+                        setForm(prev => ({ ...prev, branding: { ...prev.branding, backgroundColor: '#f0f2f5' } }));
+                        return;
+                      }
+                      handleSaveFormBranding();
+                    }}
+                    style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                    placeholder="#f0f2f5"
+                    maxLength={7}
+                  />
+                </div>
+                <p style={{fontSize: '0.75rem', color: '#888', marginTop: '0.25rem'}}>
+                  Usada quando não houver imagem de fundo.
+                </p>
+              </div>
+
+              {/* COR DOS BOTÕES/DESTAQUE — Bidirecional */}
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Cor dos Botões/Destaque</label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input 
+                    type="color"
+                    value={form?.branding?.primaryColor || '#6C63FF'}
+                    onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, primaryColor: e.target.value } }))}
+                    onBlur={() => handleSaveFormBranding()}
+                    style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                  />
+                  <input 
+                    type="text"
+                    value={form?.branding?.primaryColor || '#6C63FF'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm(prev => ({ ...prev, branding: { ...prev.branding, primaryColor: val } }));
+                    }}
+                    onBlur={(e) => {
+                      const val = e.target.value;
+                      if (!isValidHex(val)) {
+                        setForm(prev => ({ ...prev, branding: { ...prev.branding, primaryColor: '#6C63FF' } }));
+                        return;
+                      }
+                      handleSaveFormBranding();
+                    }}
+                    style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                    placeholder="#6C63FF"
+                    maxLength={7}
+                  />
+                </div>
+              </div>
+
+              {/* MODO SLIDE — Botões e Textos de Apoio */}
+              {form?.displayMode === 'SLIDE' && (
+                <div style={{ ...styles.sectionCard, marginTop: '1.5rem', borderTop: '4px solid #6C63FF' }}>
+                  <h3 style={styles.sectionTitle}>MODO SLIDE — Botões e Textos de Apoio</h3>
+                  <p style={{fontSize: '0.8rem', color: '#666', marginBottom: '1.5rem', lineHeight: '1.4'}}>
+                    Estas configurações afetam exclusivamente o layout Slide (botão Voltar, tecla Enter, e textos secundários como os placeholders e o "Pergunta X").
+                  </p>
+
+                  {/* TEXTO DO BOTÃO VOLTAR */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Texto do Botão Voltar</label>
+                    <input
+                      type="text"
+                      className="td-input"
+                      value={form?.branding?.slideBackText ?? 'Voltar'}
+                      onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, slideBackText: e.target.value } }))}
+                      onBlur={() => handleSaveFormBranding()}
+                      placeholder="Voltar"
+                      style={{...styles.input, marginBottom: '0.25rem'}}
+                    />
+                  </div>
+
+                  {/* TEXTO DA TECLA ENTER */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Texto da Tecla de Atalho (Enter)</label>
+                    <input
+                      type="text"
+                      className="td-input"
+                      value={form?.branding?.slideEnterText ?? 'Enter'}
+                      onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, slideEnterText: e.target.value } }))}
+                      onBlur={() => handleSaveFormBranding()}
+                      placeholder="Enter"
+                      style={{...styles.input, marginBottom: '0.25rem'}}
+                    />
+                  </div>
+
+                  {/* COR DOS TEXTOS DE APOIO */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Cor dos Textos de Apoio (Placeholder, etc)</label>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input 
+                        type="color"
+                        value={form?.branding?.slideHelperTextColor || '#8c8c9a'}
+                        onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, slideHelperTextColor: e.target.value } }))}
+                        onBlur={() => handleSaveFormBranding()}
+                        style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                      />
+                      <input 
+                        type="text"
+                        value={form?.branding?.slideHelperTextColor || '#8c8c9a'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setForm(prev => ({ ...prev, branding: { ...prev.branding, slideHelperTextColor: val } }));
+                        }}
+                        onBlur={(e) => {
+                          const val = e.target.value;
+                          if (!isValidHex(val)) {
+                            setForm(prev => ({ ...prev, branding: { ...prev.branding, slideHelperTextColor: '#8c8c9a' } }));
+                            return;
+                          }
+                          handleSaveFormBranding();
+                        }}
+                        style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                        placeholder="#8c8c9a"
+                        maxLength={7}
+                      />
+                    </div>
+                  </div>
+
+                  {/* COR DE FUNDO DOS BOTÕES DE APOIO */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Fundo dos Botões de Apoio (Voltar / Enter)</label>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input 
+                        type="color"
+                        value={form?.branding?.slideSupportBtnBgColor || '#f0f2f5'}
+                        onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, slideSupportBtnBgColor: e.target.value } }))}
+                        onBlur={() => handleSaveFormBranding()}
+                        style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                      />
+                      <input 
+                        type="text"
+                        value={form?.branding?.slideSupportBtnBgColor || '#f0f2f5'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setForm(prev => ({ ...prev, branding: { ...prev.branding, slideSupportBtnBgColor: val } }));
+                        }}
+                        onBlur={(e) => {
+                          const val = e.target.value;
+                          if (!isValidHex(val)) {
+                            setForm(prev => ({ ...prev, branding: { ...prev.branding, slideSupportBtnBgColor: '#f0f2f5' } }));
+                            return;
+                          }
+                          handleSaveFormBranding();
+                        }}
+                        style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                        placeholder="#f0f2f5"
+                        maxLength={7}
+                      />
+                    </div>
+                  </div>
+
+                  {/* COR DO TEXTO DOS BOTÕES DE APOIO */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Texto dos Botões de Apoio</label>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input 
+                        type="color"
+                        value={form?.branding?.slideSupportBtnTextColor || '#8c8c9a'}
+                        onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, slideSupportBtnTextColor: e.target.value } }))}
+                        onBlur={() => handleSaveFormBranding()}
+                        style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                      />
+                      <input 
+                        type="text"
+                        value={form?.branding?.slideSupportBtnTextColor || '#8c8c9a'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setForm(prev => ({ ...prev, branding: { ...prev.branding, slideSupportBtnTextColor: val } }));
+                        }}
+                        onBlur={(e) => {
+                          const val = e.target.value;
+                          if (!isValidHex(val)) {
+                            setForm(prev => ({ ...prev, branding: { ...prev.branding, slideSupportBtnTextColor: '#8c8c9a' } }));
+                            return;
+                          }
+                          handleSaveFormBranding();
+                        }}
+                        style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                        placeholder="#8c8c9a"
+                        maxLength={7}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* MODO CHAT — Avatar e Cores */}
+              {form?.displayMode === 'CHAT' && (
+                <div style={{ ...styles.sectionCard, marginTop: '1.5rem', borderTop: '4px solid #10b981' }}>
+                  <h3 style={styles.sectionTitle}>MODO CHAT — Avatar e Cabeçalho</h3>
+                  <p style={{fontSize: '0.8rem', color: '#666', marginBottom: '1.5rem', lineHeight: '1.4'}}>
+                    Configurações exclusivas do layout conversacional.
+                  </p>
+
+                  {/* AVATAR UPLOAD */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Avatar do Bot</label>
+                    <input 
+                      type="file" 
+                      accept="image/png, image/jpeg, image/gif, image/webp"
+                      onChange={handleAvatarUpload}
+                      style={styles.input}
+                      disabled={isUploadingAvatar}
+                    />
+                    {isUploadingAvatar && <p style={{fontSize: '0.8rem', color: '#6C63FF'}}>Enviando avatar...</p>}
+                    {form?.branding?.avatarUrl && (
+                      <img 
+                        src={import.meta.env.VITE_API_URL ? `${import.meta.env.VITE_API_URL}${form.branding.avatarUrl}` : form.branding.avatarUrl} 
+                        alt="Preview Avatar" 
+                        style={{ 
+                          width: '60px', height: '60px', marginTop: '10px', 
+                          borderRadius: '50%', objectFit: 'cover', 
+                          border: '2px solid #e2e8f0'
+                        }} 
+                      />
+                    )}
+                    <p style={{fontSize: '0.75rem', color: '#888', marginTop: '0.25rem'}}>
+                      Imagem circular exibida no header do chat.
+                    </p>
+                  </div>
+
+                  {/* COR SECUNDÁRIA (Header/Input do Chat) — Bidirecional */}
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Fundo do Cabeçalho e Mensagens (Chat)</label>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input 
+                        type="color"
+                        value={form?.branding?.secondaryColor || '#ffffff'}
+                        onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, secondaryColor: e.target.value } }))}
+                        onBlur={() => handleSaveFormBranding()}
+                        style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                      />
+                      <input 
+                        type="text"
+                        value={form?.branding?.secondaryColor || '#ffffff'}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          setForm(prev => ({ ...prev, branding: { ...prev.branding, secondaryColor: val } }));
+                        }}
+                        onBlur={(e) => {
+                          const val = e.target.value;
+                          if (!isValidHex(val)) {
+                            setForm(prev => ({ ...prev, branding: { ...prev.branding, secondaryColor: '#ffffff' } }));
+                            return;
+                          }
+                          handleSaveFormBranding();
+                        }}
+                        style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                        placeholder="#ffffff"
+                        maxLength={7}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* COR DO TEXTO — Bidirecional */}
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Cor do Texto</label>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <input 
+                    type="color"
+                    value={form?.branding?.textColor || '#1a1a2e'}
+                    onChange={(e) => setForm(prev => ({ ...prev, branding: { ...prev.branding, textColor: e.target.value } }))}
+                    onBlur={() => handleSaveFormBranding()}
+                    style={{ padding: '0', height: '36px', width: '50px', cursor: 'pointer', border: '1px solid #cbd5e1', borderRadius: '6px' }}
+                  />
+                  <input 
+                    type="text"
+                    value={form?.branding?.textColor || '#1a1a2e'}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setForm(prev => ({ ...prev, branding: { ...prev.branding, textColor: val } }));
+                    }}
+                    onBlur={(e) => {
+                      const val = e.target.value;
+                      if (!isValidHex(val)) {
+                        setForm(prev => ({ ...prev, branding: { ...prev.branding, textColor: '#1a1a2e' } }));
+                        return;
+                      }
+                      handleSaveFormBranding();
+                    }}
+                    style={{ ...styles.input, width: '100px', padding: '0.4rem 0.6rem', fontSize: '0.85rem', fontFamily: 'monospace', marginBottom: 0 }}
+                    placeholder="#1a1a2e"
+                    maxLength={7}
+                  />
+                </div>
+              </div>
+
+              <div style={styles.formGroup}>
+                <label style={styles.label}>Fonte Premium</label>
+                <select 
+                  value={form?.branding?.fontFamily || 'Inter'}
+                  onChange={async (e) => {
+                    const updatedBranding = { ...(form?.branding || {}), fontFamily: e.target.value };
+                    setForm(prev => ({ ...prev, branding: updatedBranding, hasUnpublishedChanges: true }));
+                    setIsSaving(true);
+                    try {
+                      await updateForm(WORKSPACE_ID, formId, { branding: updatedBranding });
+                    } catch (err) {
+                      alert(`Erro: ${err.message}`);
+                    } finally {
+                      setIsSaving(false);
+                    }
+                  }}
+                  style={styles.input}
+                >
+                  <option value="Inter">Inter</option>
+                  <option value="Roboto">Roboto</option>
+                  <option value="Poppins">Poppins</option>
+                  <option value="Montserrat">Montserrat</option>
+                  <option value="Outfit">Outfit</option>
+                </select>
+              </div>
+
             </div>
           )}
         </aside>
@@ -895,6 +1298,25 @@ const styles = {
   },
   settingsPanel: {
     padding: '1.5rem',
+  },
+  settingsPanelHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '1rem',
+  },
+  closePanelBtn: {
+    background: 'none',
+    border: 'none',
+    fontSize: '1.2rem',
+    cursor: 'pointer',
+    color: '#888',
+    padding: '0.2rem',
+    lineHeight: '1',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: '4px',
   },
   emptySettings: {
     padding: '3rem 1.5rem',

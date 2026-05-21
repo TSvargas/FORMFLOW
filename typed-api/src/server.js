@@ -15,16 +15,31 @@
 // e segue o padrão Decorator do Fastify.
 // =============================================================================
 
+import fs from 'node:fs';
+import path from 'node:path';
+import crypto from 'node:crypto';
+
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import sensible from '@fastify/sensible';
+import fastifyStatic from '@fastify/static';
+import fastifyMultipart from '@fastify/multipart';
 import prisma from './lib/prisma.js';
 
 // --- Módulos de Rotas ---
 import formsRoutes from './routes/forms.js';
 import submissionsRoutes from './routes/submissions.js';
+import uploadsRoutes from './routes/uploads.js';
+
+// =============================================================================
+// PREPARAÇÃO DO DIRETÓRIO DE UPLOADS
+// =============================================================================
+const UPLOADS_DIR = path.join(process.cwd(), 'uploads');
+if (!fs.existsSync(UPLOADS_DIR)) {
+  fs.mkdirSync(UPLOADS_DIR, { recursive: true });
+}
 
 // =============================================================================
 // 1. INSTÂNCIA FASTIFY
@@ -66,6 +81,21 @@ await app.register(cors, {
 // Sensible — Adiciona helpers como reply.notFound(), reply.badRequest(), etc.
 // Evita escrever objetos de erro manualmente em cada handler.
 await app.register(sensible);
+
+// =============================================================================
+// UPLOADS: Multipart e Static
+// =============================================================================
+await app.register(fastifyMultipart, {
+  limits: {
+    fileSize: 5 * 1024 * 1024, // Limite de 5MB
+  },
+});
+
+await app.register(fastifyStatic, {
+  root: UPLOADS_DIR,
+  prefix: '/uploads/',
+  // Isolado de rotas da API restritas para evitar problemas de CORS no frontend
+});
 
 // =============================================================================
 // SEGURANÇA: Helmet — Headers HTTP de Proteção
@@ -153,6 +183,7 @@ app.get('/health', async (request, reply) => {
 // =============================================================================
 await app.register(formsRoutes, { prefix: '/api' });
 await app.register(submissionsRoutes, { prefix: '/api' });
+await app.register(uploadsRoutes, { prefix: '/api' });
 
 // =============================================================================
 // 6. INICIALIZAÇÃO DO SERVIDOR

@@ -36,7 +36,7 @@ import './SlideRenderer.css';
 // Cada tipo recebe onSubmit(value) para enviar a resposta.
 // Inclui validação rígida para EMAIL e PHONE.
 // =============================================================================
-function SlideInput({ block, onSubmit }) {
+function SlideInput({ block, onSubmit, branding }) {
   const [value, setValue] = useState('');
   const [error, setError] = useState(null);
   const inputRef = useRef(null);
@@ -145,7 +145,7 @@ function SlideInput({ block, onSubmit }) {
           Continuar
         </button>
         <span className="td-slide-cta-hint">
-          ou pressione <kbd>Enter</kbd>
+          ou pressione <kbd>{branding?.slideEnterText || 'Enter'}</kbd>
         </span>
       </>
     );
@@ -174,7 +174,7 @@ function SlideInput({ block, onSubmit }) {
           Continuar
         </button>
         <span className="td-slide-cta-hint">
-          ou pressione <kbd>Enter</kbd>
+          ou pressione <kbd>{branding?.slideEnterText || 'Enter'}</kbd>
         </span>
       </>
     );
@@ -203,7 +203,7 @@ function SlideInput({ block, onSubmit }) {
           Continuar
         </button>
         <span className="td-slide-cta-hint">
-          ou pressione <kbd>Enter</kbd>
+          ou pressione <kbd>{branding?.slideEnterText || 'Enter'}</kbd>
         </span>
       </>
     );
@@ -267,8 +267,22 @@ export default function SlideRenderer() {
   // Key para forçar re-mount do slide card (re-trigger da animação CSS).
   const [slideKey, setSlideKey] = useState(0);
 
-  // Branding
-  const accentColor = formConfig?.branding?.primaryColor || '#6C63FF';
+  // -------------------------------------------------------------------------
+  // BRANDING: Aplicar variáveis CSS dinâmicas do branding
+  // -------------------------------------------------------------------------
+  const branding = formConfig?.branding || {};
+  const accentColor = branding.primaryColor || '#6C63FF';
+  const textColor = branding.textColor || '#1a1a2e';
+  const fontFamily = branding.fontFamily || '';
+
+  const brandingVars = {
+    '--td-accent': accentColor,
+    '--td-text': textColor,
+    '--td-slide-helper': branding.slideHelperTextColor || '#8c8c9a',
+    '--td-slide-support-bg': branding.slideSupportBtnBgColor || '#f0f2f5',
+    '--td-slide-support-text': branding.slideSupportBtnTextColor || '#8c8c9a',
+    ...(fontFamily ? { '--td-font': `"${fontFamily}", sans-serif` } : {}),
+  };
 
   // Atualiza a key quando o step muda para re-trigger da animação.
   useEffect(() => {
@@ -329,7 +343,7 @@ export default function SlideRenderer() {
 
   if (status === 'loading' || status === 'idle') {
     return (
-      <div className="td-slide-loading" style={{ '--td-accent': accentColor }}>
+      <div className="td-slide-loading" style={brandingVars}>
         <div className="td-slide-spinner" />
         <span>Carregando...</span>
       </div>
@@ -352,7 +366,7 @@ export default function SlideRenderer() {
     const message = endBlock?.config?.message || 'Obrigado por completar o formulário. As suas respostas foram registadas com sucesso.';
 
     return (
-      <div className="td-slide-completed" style={{ '--td-accent': accentColor }}>
+      <div className="td-slide-completed" style={brandingVars}>
         <div className="td-slide-completed-icon">✓</div>
         <h2>{title}</h2>
         <p>{message}</p>
@@ -371,7 +385,7 @@ export default function SlideRenderer() {
   const description = currentBlock?.config?.description || null;
 
   return (
-    <div className="td-slide-container" style={{ '--td-accent': accentColor }}>
+    <div className="td-slide-container" style={brandingVars}>
       {/* Barra de progresso */}
       <div className="td-slide-progress">
         <div
@@ -427,7 +441,7 @@ export default function SlideRenderer() {
                 Continuar
               </button>
               <span className="td-slide-cta-hint">
-                ou pressione <kbd>Enter</kbd>
+                ou pressione <kbd>{branding?.slideEnterText || 'Enter'}</kbd>
               </span>
             </>
           )}
@@ -437,19 +451,19 @@ export default function SlideRenderer() {
             <SlideInput
               block={currentBlock}
               onSubmit={handleSubmit}
+              branding={branding}
             />
           )}
         </div>
       </div>
 
-      {/* Navegação inferior */}
       <div className="td-slide-nav">
         <button
           className={`td-slide-nav-btn ${!canGoBack ? 'td-slide-nav-btn--hidden' : ''}`}
           onClick={() => goToStep(currentStepIndex - 1)}
           type="button"
         >
-          ← Voltar
+          &larr; {branding?.slideBackText || 'Voltar'}
         </button>
 
         <span style={{ fontSize: '0.72rem', color: '#c8c8d0' }}>
@@ -458,7 +472,7 @@ export default function SlideRenderer() {
 
         {/* Espaçador para manter o "Powered by" centralizado */}
         <div className="td-slide-nav-btn td-slide-nav-btn--hidden">
-          ← Voltar
+          &larr; {branding?.slideBackText || 'Voltar'}
         </div>
       </div>
     </div>

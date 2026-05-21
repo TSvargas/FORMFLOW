@@ -176,6 +176,8 @@ export default function AdminDashboard() {
 const styles = {
   container: {
     maxWidth: '1000px',
+    width: '100%',
+    boxSizing: 'border-box',
     margin: '0 auto',
     padding: '2rem',
     fontFamily: 'system-ui, sans-serif',

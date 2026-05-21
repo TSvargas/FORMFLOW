@@ -17,7 +17,7 @@
 //
 // =============================================================================
 
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 import { FormEngineProvider, useFormEngine } from '../context/FormEngineProvider.jsx';
 import ChatRenderer from '../renderers/ChatRenderer.jsx';
 import SlideRenderer from '../renderers/SlideRenderer.jsx';
@@ -53,8 +53,8 @@ function FormRouter() {
     );
   }
 
-  // --- Estado: Formulário carregado — rotear por displayMode ---
-  if (status === 'ready' || status === 'submitting') {
+  // --- Estado: Formulário carregado ou Concluído — rotear por displayMode ---
+  if (status === 'ready' || status === 'submitting' || status === 'completed') {
     switch (formConfig?.displayMode) {
       case 'CHAT':
         return <ChatRenderer />;
@@ -72,16 +72,6 @@ function FormRouter() {
     }
   }
 
-  // --- Estado: Concluído ---
-  if (status === 'completed') {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '100vh', flexDirection: 'column', gap: '1rem' }}>
-        <h2>✓ Obrigado!</h2>
-        <p>Suas respostas foram enviadas com sucesso.</p>
-      </div>
-    );
-  }
-
   return null;
 }
 
@@ -90,6 +80,8 @@ function FormRouter() {
 // =============================================================================
 export default function PublicForm() {
   const { slug } = useParams();
+  const [searchParams] = useSearchParams();
+  const isPreview = searchParams.get('preview') === 'true';
 
   // SEGURANÇA: Validar que o slug existe e tem formato aceitável.
   // Previne requests com slugs vazios ou com caracteres perigosos.
@@ -102,7 +94,7 @@ export default function PublicForm() {
   }
 
   return (
-    <FormEngineProvider slug={slug}>
+    <FormEngineProvider slug={slug} preview={isPreview}>
       <FormRouter />
     </FormEngineProvider>
   );

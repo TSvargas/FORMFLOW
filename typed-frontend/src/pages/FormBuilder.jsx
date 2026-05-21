@@ -10,7 +10,10 @@ import {
   updateBlock, 
   deleteBlock, 
   reorderBlocks,
-  updateForm
+  updateForm,
+  publishForm,
+  unpublishForm,
+  discardDraft
 } from '../lib/api.js';
 
 const WORKSPACE_ID = "ws-mock-123";
@@ -24,6 +27,7 @@ const AVAILABLE_BLOCKS = [
   { type: 'INPUT_TEXTAREA', label: 'Texto Longo' },
   { type: 'INPUT_SELECT', label: 'Múltipla Escolha' },
   { type: 'END_SCREEN', label: 'Ecrã Final' },
+  { type: 'WAIT', label: 'Atraso (Tempo)' },
 ];
 
 export default function FormBuilder() {
@@ -37,6 +41,8 @@ export default function FormBuilder() {
   
   const [selectedBlockId, setSelectedBlockId] = useState(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [webhookSaved, setWebhookSaved] = useState(false);
 
   // Debounce ref para auto-save
   const debounceTimerRef = useState(null);
@@ -66,16 +72,25 @@ export default function FormBuilder() {
     setIsSaving(true);
     try {
       const isSelect = type === 'INPUT_SELECT' || type === 'INPUT_BUTTONS';
+      const isWait = type === 'WAIT';
+      const isInput = type.startsWith('INPUT_');
+      
+      let initialConfig = isSelect ? { options: ['Opção 1', 'Opção 2'] } : (isWait ? { duration: 1200 } : { placeholder: 'Digite aqui...' });
+      if (isInput) {
+        initialConfig.variableName = type.toLowerCase().replace('input_', '') + '_' + Math.floor(Math.random() * 1000);
+      }
+
       const newBlock = await createBlock(WORKSPACE_ID, formId, {
         type,
-        label: type.startsWith('INPUT_') ? 'Nova Pergunta' : 'Nova Mensagem',
-        config: isSelect ? { options: ['Opção 1', 'Opção 2'] } : { placeholder: 'Digite aqui...' },
-        required: type !== 'TEXT' && type !== 'END_SCREEN'
+        label: isWait ? 'Tempo de Espera' : (isInput ? 'Nova Pergunta' : 'Nova Mensagem'),
+        config: initialConfig,
+        required: isInput
       });
       
       const updatedBlocks = [...blocks, newBlock];
       setBlocks(updatedBlocks);
       setSelectedBlockId(newBlock.id);
+      setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
     } catch (err) {
       alert(`Erro ao adicionar bloco: ${err.message}`);
     } finally {
@@ -91,6 +106,7 @@ export default function FormBuilder() {
       await deleteBlock(WORKSPACE_ID, formId, blockId);
       setBlocks(blocks.filter(b => b.id !== blockId));
       if (selectedBlockId === blockId) setSelectedBlockId(null);
+      setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
     } catch (err) {
       alert(`Erro ao eliminar: ${err.message}`);
     } finally {
@@ -122,6 +138,7 @@ export default function FormBuilder() {
       const orderedIds = newBlocks.map(b => b.id);
       const reordered = await reorderBlocks(WORKSPACE_ID, formId, orderedIds);
       setBlocks(reordered); // Sincroniza com DB (garante ordem exata)
+      setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
     } catch (err) {
       alert(`Erro ao reordenar: ${err.message}`);
       loadForm(); // Reverte em caso de erro
@@ -155,6 +172,7 @@ export default function FormBuilder() {
         config: block.config,
         required: block.required,
       });
+      setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
       // Pequeno delay artificial para dar feedback visual de sucesso
       await new Promise(r => setTimeout(r, 600));
     } catch (err) {
@@ -164,17 +182,65 @@ export default function FormBuilder() {
     }
   }
 
+  async function handleSaveFormSettings() {
+    setIsSaving(true);
+    try {
+      await updateForm(WORKSPACE_ID, formId, {
+        settings: form.settings
+      });
+      setWebhookSaved(true);
+      setTimeout(() => setWebhookSaved(false), 2000);
+    } catch (err) {
+      alert(`Erro ao salvar configurações do formulário: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
   // ===========================================================================
   // AÇÕES DO FORMULÁRIO
   // ===========================================================================
 
-  async function handleTogglePublish() {
+  async function handlePublish() {
     setIsSaving(true);
     try {
-      const updated = await updateForm(WORKSPACE_ID, formId, { isPublished: !form.isPublished });
-      setForm(prev => ({ ...prev, isPublished: updated.isPublished }));
+      const updated = await publishForm(WORKSPACE_ID, formId);
+      setForm(updated);
+      setBlocks(updated.blocks || []);
     } catch (err) {
-      alert(`Erro ao alterar estado: ${err.message}`);
+      alert(`Erro ao publicar: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleUnpublish() {
+    if (!window.confirm('Ao despublicar, o link público ficará indisponível para os leads. Continuar?')) return;
+    setIsSaving(true);
+    try {
+      const updated = await unpublishForm(WORKSPACE_ID, formId);
+      setForm(updated);
+      setBlocks(updated.blocks || []);
+    } catch (err) {
+      alert(`Erro ao despublicar: ${err.message}`);
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDiscard() {
+    if (!window.confirm(
+      'Descartar todas as alterações de rascunho e restaurar a versão em produção?\n\n' +
+      'Esta ação é irreversível para as alterações não publicadas.'
+    )) return;
+    setIsSaving(true);
+    try {
+      const restored = await discardDraft(WORKSPACE_ID, formId);
+      setForm(restored);
+      setBlocks(restored.blocks || []);
+      setSelectedBlockId(null);
+    } catch (err) {
+      alert(`Erro ao descartar rascunho: ${err.message}`);
     } finally {
       setIsSaving(false);
     }
@@ -188,6 +254,7 @@ export default function FormBuilder() {
   if (error) return <div style={styles.centerMessage}>Erro: {error}</div>;
 
   const selectedBlock = blocks.find(b => b.id === selectedBlockId);
+  const publicUrl = `${window.location.origin}/f/${form?.slug}`;
 
   return (
     <div style={styles.container}>
@@ -202,14 +269,87 @@ export default function FormBuilder() {
             <p style={styles.subtitle}>/f/{form?.slug} • {form?.displayMode}</p>
           </div>
         </div>
-        <div style={{display: 'flex', gap: '1rem', alignItems: 'center'}}>
-          <button 
-            style={form?.isPublished ? styles.publishedBtn : styles.draftBtn}
-            onClick={handleTogglePublish}
-            disabled={isSaving}
-          >
-            {form?.isPublished ? 'Despublicar' : 'Publicar Formulário'}
-          </button>
+        <div style={{display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap'}}>
+          {/* STATUS BADGE */}
+          {form?.isPublished && !form?.hasUnpublishedChanges && (
+            <span style={styles.statusBadgeOk}>✓ Produção atualizada</span>
+          )}
+          {form?.isPublished && form?.hasUnpublishedChanges && (
+            <span style={styles.statusBadgeDraft}>● Rascunho pendente</span>
+          )}
+          {!form?.isPublished && (
+            <span style={styles.statusBadgeOffline}>○ Offline</span>
+          )}
+
+          {/* SHARE LINK (só quando publicado) */}
+          {form?.isPublished && (
+            <div style={styles.shareContainer}>
+              <span style={styles.shareLabel}>Link público:</span>
+              <input 
+                type="text" 
+                readOnly 
+                value={publicUrl} 
+                onClick={(e) => e.target.select()}
+                style={styles.shareInput}
+              />
+              <button 
+                onClick={() => {
+                  navigator.clipboard.writeText(publicUrl);
+                  setCopied(true);
+                  setTimeout(() => setCopied(false), 2000);
+                }}
+                style={{
+                  ...styles.copyBtn,
+                  backgroundColor: copied ? '#16a34a' : '#fff',
+                  color: copied ? '#fff' : '#475569',
+                  borderColor: copied ? '#16a34a' : '#cbd5e1',
+                }}
+              >
+                {copied ? 'Copiado! ✓' : 'Copiar'}
+              </button>
+            </div>
+          )}
+
+          {/* AÇÕES DE PUBLICAÇÃO */}
+          {form?.hasUnpublishedChanges && (
+            <>
+              <button 
+                style={styles.publishBtn}
+                onClick={handlePublish}
+                disabled={isSaving}
+              >
+                Publicar Alterações
+              </button>
+              {form?.publishedBlocks && (
+                <button 
+                  style={styles.discardBtn}
+                  onClick={handleDiscard}
+                  disabled={isSaving}
+                >
+                  Descartar Rascunho
+                </button>
+              )}
+            </>
+          )}
+          {!form?.hasUnpublishedChanges && !form?.isPublished && (
+            <button 
+              style={styles.publishBtn}
+              onClick={handlePublish}
+              disabled={isSaving}
+            >
+              Publicar Formulário
+            </button>
+          )}
+          {form?.isPublished && (
+            <button 
+              style={styles.unpublishBtn}
+              onClick={handleUnpublish}
+              disabled={isSaving}
+            >
+              Despublicar
+            </button>
+          )}
+
           <a 
             href={`/f/${form?.slug}?preview=true`} 
             target="_blank" 
@@ -236,6 +376,36 @@ export default function FormBuilder() {
                 + {b.label}
               </button>
             ))}
+          </div>
+
+          <div style={{ marginTop: '2.5rem' }}>
+            <h3 style={styles.sidebarTitle}>Configurações do Formulário</h3>
+            
+            <div style={styles.formGroup}>
+              <label style={styles.label}>URL de Integração (Webhook / n8n)</label>
+              <input 
+                type="text"
+                value={form?.settings?.webhookUrl || ''}
+                onChange={(e) => setForm(prev => ({
+                  ...prev,
+                  settings: { ...prev.settings, webhookUrl: e.target.value }
+                }))}
+                onBlur={handleSaveFormSettings}
+                style={{
+                  ...styles.input,
+                  borderColor: webhookSaved ? '#16a34a' : '#cbd5e1'
+                }}
+                placeholder="https://n8n.meusite.com/webhook/..."
+              />
+              {webhookSaved && (
+                <p style={{fontSize: '0.75rem', color: '#16a34a', marginTop: '0.25rem'}}>
+                  ✓ Salvo com sucesso!
+                </p>
+              )}
+              <p style={{fontSize: '0.75rem', color: '#666', marginTop: '0.25rem'}}>
+                Enviaremos um POST para esta URL a cada submissão concluída.
+              </p>
+            </div>
           </div>
         </aside>
 
@@ -297,16 +467,55 @@ export default function FormBuilder() {
                 Tipo: <strong>{selectedBlock.type}</strong>
               </p>
 
-              <div style={styles.formGroup}>
-                <label style={styles.label}>Título / Pergunta</label>
-                <textarea 
-                  value={selectedBlock.label || ''}
-                  onChange={(e) => handleBlockUpdateLocally(selectedBlock.id, 'label', e.target.value)}
-                  onBlur={() => handleSaveBlock(selectedBlock)}
-                  style={styles.textarea}
-                  rows={3}
-                />
-              </div>
+              {selectedBlock.type !== 'WAIT' && (
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Título / Pergunta</label>
+                  <textarea 
+                    value={selectedBlock.label || ''}
+                    onChange={(e) => handleBlockUpdateLocally(selectedBlock.id, 'label', e.target.value)}
+                    onBlur={() => handleSaveBlock(selectedBlock)}
+                    style={styles.textarea}
+                    rows={3}
+                  />
+                </div>
+              )}
+
+              {selectedBlock.type.startsWith('INPUT_') && (
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>ID Interno da Variável (para Webhooks)</label>
+                  <input 
+                    type="text"
+                    value={selectedBlock.config?.variableName || ''}
+                    onChange={(e) => {
+                      const safeValue = e.target.value.replace(/[^a-zA-Z0-9_]/g, '');
+                      handleBlockUpdateLocally(selectedBlock.id, 'config.variableName', safeValue);
+                    }}
+                    onBlur={() => handleSaveBlock(selectedBlock)}
+                    style={styles.input}
+                    placeholder="Ex: email_lead"
+                  />
+                  <p style={{fontSize: '0.75rem', color: '#666', marginTop: '0.25rem'}}>Usado como chave do JSON em integrações. Sem espaços.</p>
+                </div>
+              )}
+
+              {selectedBlock.type === 'WAIT' && (
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Tempo de Atraso (milissegundos)</label>
+                  <input 
+                    type="number"
+                    value={selectedBlock.config?.duration ?? 1200}
+                    onChange={(e) => handleBlockUpdateLocally(selectedBlock.id, 'config.duration', Number(e.target.value))}
+                    onBlur={() => handleSaveBlock(selectedBlock)}
+                    style={styles.input}
+                    min="0"
+                    step="100"
+                    placeholder="Ex: 1200"
+                  />
+                  <p style={{fontSize: '0.8rem', color: '#666', marginTop: '0.5rem'}}>
+                    1000 milissegundos = 1 segundo.
+                  </p>
+                </div>
+              )}
 
               {selectedBlock.type.startsWith('INPUT_') && selectedBlock.type !== 'INPUT_BUTTONS' && selectedBlock.type !== 'INPUT_SELECT' && (
                 <div style={styles.formGroup}>
@@ -321,7 +530,7 @@ export default function FormBuilder() {
                 </div>
               )}
 
-              {['TEXT', 'WAIT', 'END_SCREEN'].includes(selectedBlock.type) && (
+              {['TEXT', 'END_SCREEN'].includes(selectedBlock.type) && (
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Mensagem Adicional</label>
                   <input 
@@ -352,18 +561,73 @@ export default function FormBuilder() {
 
               {(selectedBlock.type === 'INPUT_BUTTONS' || selectedBlock.type === 'INPUT_SELECT') && (
                 <div style={styles.formGroup}>
-                  <label style={styles.label}>Opções (Separadas por vírgula)</label>
-                  <input 
-                    type="text"
-                    value={(selectedBlock.config?.options || []).join(', ')}
-                    onChange={(e) => {
-                      const opts = e.target.value.split(',').map(s => s.trim()).filter(s => s);
-                      handleBlockUpdateLocally(selectedBlock.id, 'config.options', opts);
+                  <label style={styles.label}>Opções de Resposta</label>
+                  
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                    {(selectedBlock.config?.options || []).map((opt, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        <input 
+                          type="text"
+                          value={opt}
+                          placeholder={`Opção ${idx + 1}`}
+                          onChange={(e) => {
+                            const newOptions = [...(selectedBlock.config?.options || [])];
+                            newOptions[idx] = e.target.value;
+                            handleBlockUpdateLocally(selectedBlock.id, 'config.options', newOptions);
+                          }}
+                          onBlur={() => handleSaveBlock(selectedBlock)}
+                          style={{ ...styles.input, flex: 1, marginBottom: 0 }}
+                        />
+                        <button
+                          onClick={() => {
+                            const newOptions = [...(selectedBlock.config?.options || [])];
+                            newOptions.splice(idx, 1);
+                            handleBlockUpdateLocally(selectedBlock.id, 'config.options', newOptions);
+                            handleSaveBlock({
+                              ...selectedBlock,
+                              config: { ...selectedBlock.config, options: newOptions }
+                            });
+                          }}
+                          style={{
+                            ...styles.iconBtn,
+                            color: '#dc2626',
+                            padding: '0.5rem',
+                            backgroundColor: '#fee2e2',
+                            borderRadius: '6px'
+                          }}
+                          title="Remover Opção"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <button
+                    onClick={() => {
+                      const newOptions = [...(selectedBlock.config?.options || []), `Opção ${(selectedBlock.config?.options?.length || 0) + 1}`];
+                      handleBlockUpdateLocally(selectedBlock.id, 'config.options', newOptions);
+                      handleSaveBlock({
+                        ...selectedBlock,
+                        config: { ...selectedBlock.config, options: newOptions }
+                      });
                     }}
-                    onBlur={() => handleSaveBlock(selectedBlock)}
-                    style={styles.input}
-                    placeholder="Opção A, Opção B"
-                  />
+                    style={{
+                      backgroundColor: '#f1f5f9',
+                      border: '1px dashed #cbd5e1',
+                      color: '#475569',
+                      padding: '0.5rem',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      width: '100%',
+                      fontWeight: '500',
+                      transition: 'background-color 0.2s',
+                    }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = '#e2e8f0'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = '#f1f5f9'}
+                  >
+                    + Adicionar Opção
+                  </button>
                 </div>
               )}
               
@@ -458,6 +722,67 @@ const styles = {
     fontWeight: '500',
     cursor: 'pointer',
     fontSize: '0.9rem',
+  },
+  publishBtn: {
+    backgroundColor: '#16a34a',
+    color: '#fff',
+    border: 'none',
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    fontSize: '0.85rem',
+    boxShadow: '0 2px 8px rgba(22,163,74,0.3)',
+    transition: 'opacity 0.2s',
+  },
+  unpublishBtn: {
+    backgroundColor: 'transparent',
+    color: '#94a3b8',
+    border: '1px solid #cbd5e1',
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    fontSize: '0.8rem',
+    transition: 'all 0.2s',
+  },
+  discardBtn: {
+    backgroundColor: 'transparent',
+    color: '#ef4444',
+    border: '1px solid #fecaca',
+    padding: '0.5rem 1rem',
+    borderRadius: '6px',
+    fontWeight: '500',
+    cursor: 'pointer',
+    fontSize: '0.8rem',
+    transition: 'all 0.2s',
+  },
+  statusBadgeOk: {
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    color: '#16a34a',
+    backgroundColor: '#f0fdf4',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '20px',
+    border: '1px solid #bbf7d0',
+  },
+  statusBadgeDraft: {
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    color: '#d97706',
+    backgroundColor: '#fffbeb',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '20px',
+    border: '1px solid #fde68a',
+  },
+  statusBadgeOffline: {
+    fontSize: '0.75rem',
+    fontWeight: '600',
+    color: '#64748b',
+    backgroundColor: '#f1f5f9',
+    padding: '0.3rem 0.7rem',
+    borderRadius: '20px',
+    border: '1px solid #cbd5e1',
   },
   layout: {
     display: 'flex',
@@ -620,5 +945,37 @@ const styles = {
     alignItems: 'center',
     height: '100vh',
     color: '#666',
-  }
+  },
+  shareContainer: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    backgroundColor: '#f1f5f9',
+    padding: '0.4rem 0.8rem',
+    borderRadius: '8px',
+    border: '1px solid #cbd5e1',
+  },
+  shareLabel: {
+    fontSize: '0.8rem',
+    color: '#475569',
+    fontWeight: '500',
+  },
+  shareInput: {
+    border: 'none',
+    background: 'transparent',
+    fontSize: '0.85rem',
+    color: '#0f172a',
+    width: '180px',
+    outline: 'none',
+    cursor: 'pointer',
+  },
+  copyBtn: {
+    border: '1px solid #cbd5e1',
+    borderRadius: '6px',
+    padding: '0.3rem 0.6rem',
+    fontSize: '0.75rem',
+    cursor: 'pointer',
+    fontWeight: '500',
+    transition: 'all 0.2s ease',
+  },
 };

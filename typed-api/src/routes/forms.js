@@ -461,18 +461,25 @@ export default async function formsRoutes(fastify) {
       finalOrder = lastBlock ? lastBlock.order + 1 : 0;
     }
 
-    const block = await prisma.formBlock.create({
-      data: {
-        type,
-        label: label || null,
-        config: config || {},
-        required: isRequired !== undefined ? isRequired : true,
-        order: finalOrder,
-        formId,
-      },
-    });
+    // TRANSAÇÃO: Cria bloco + marca rascunho pendente atomicamente.
+    const [block] = await prisma.$transaction([
+      prisma.formBlock.create({
+        data: {
+          type,
+          label: label || null,
+          config: config || {},
+          required: isRequired !== undefined ? isRequired : true,
+          order: finalOrder,
+          formId,
+        },
+      }),
+      prisma.form.update({
+        where: { id: formId },
+        data: { hasUnpublishedChanges: true },
+      }),
+    ]);
 
-    request.log.info({ blockId: block.id, type, order: finalOrder }, 'Bloco criado.');
+    request.log.info({ blockId: block.id, type, order: finalOrder }, 'Bloco criado (rascunho).');
     return reply.code(201).send(block);
   });
 
@@ -520,10 +527,17 @@ export default async function formsRoutes(fastify) {
       );
     }
 
-    const updated = await prisma.formBlock.update({
-      where: { id: blockId },
-      data: updates,
-    });
+    // TRANSAÇÃO: Atualiza bloco + marca rascunho pendente atomicamente.
+    const [updated] = await prisma.$transaction([
+      prisma.formBlock.update({
+        where: { id: blockId },
+        data: updates,
+      }),
+      prisma.form.update({
+        where: { id: formId },
+        data: { hasUnpublishedChanges: true },
+      }),
+    ]);
 
     return reply.send(updated);
   });
@@ -589,9 +603,13 @@ export default async function formsRoutes(fastify) {
           order: { decrement: 1 },
         },
       }),
+      prisma.form.update({
+        where: { id: formId },
+        data: { hasUnpublishedChanges: true },
+      }),
     ]);
 
-    request.log.info({ blockId, formId }, 'Bloco eliminado e ordem recalculada.');
+    request.log.info({ blockId, formId }, 'Bloco eliminado e ordem recalculada (rascunho).');
     return reply.code(204).send();
   });
 
@@ -719,6 +737,14 @@ export default async function formsRoutes(fastify) {
       })
     );
 
+    // Inclui a flag de rascunho na mesma transação atômica.
+    updateOperations.push(
+      prisma.form.update({
+        where: { id: formId },
+        data: { hasUnpublishedChanges: true },
+      })
+    );
+
     await prisma.$transaction(updateOperations);
 
     request.log.info(
@@ -733,5 +759,205 @@ export default async function formsRoutes(fastify) {
     });
 
     return reply.send(reordered);
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  //  ROTAS DE PUBLICAÇÃO (Draft → Production)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  // ===========================================================================
+  // POST /workspaces/:workspaceId/forms/:formId/publish — Publicar alterações
+  // ===========================================================================
+  // Tira um snapshot dos blocos atuais da tabela FormBlock, serializa como
+  // JSON e salva em `publishedBlocks`. Define `isPublished = true` e
+  // `hasUnpublishedChanges = false`.
+  //
+  // A rota pública GET /f/:slug passará a servir este snapshot aos leads.
+  // ===========================================================================
+  fastify.post('/workspaces/:workspaceId/forms/:formId/publish', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['workspaceId', 'formId'],
+        properties: {
+          workspaceId: { type: 'string' },
+          formId:      { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { workspaceId, formId } = request.params;
+
+    await assertFormBelongsToWorkspace(formId, workspaceId);
+
+    // Busca os blocos atuais (rascunho) para gerar o snapshot.
+    const draftBlocks = await prisma.formBlock.findMany({
+      where: { formId },
+      orderBy: { order: 'asc' },
+      select: {
+        id: true,
+        type: true,
+        order: true,
+        config: true,
+        label: true,
+        required: true,
+      },
+    });
+
+    // Salva o snapshot e marca como publicado numa única operação.
+    const updated = await prisma.form.update({
+      where: { id: formId },
+      data: {
+        publishedBlocks: draftBlocks,
+        isPublished: true,
+        hasUnpublishedChanges: false,
+      },
+      include: {
+        blocks: { orderBy: { order: 'asc' } },
+        _count: { select: { submissions: true } },
+      },
+    });
+
+    request.log.info(
+      { formId, blocksCount: draftBlocks.length },
+      'Formulário publicado — snapshot salvo.'
+    );
+
+    return reply.send(updated);
+  });
+
+  // ===========================================================================
+  // POST /workspaces/:workspaceId/forms/:formId/unpublish — Despublicar
+  // ===========================================================================
+  // Remove o acesso público (isPublished = false) mas preserva tanto o
+  // rascunho (FormBlock) quanto o snapshot (publishedBlocks) intactos.
+  // Isso permite republicar rapidamente sem perder o estado.
+  // ===========================================================================
+  fastify.post('/workspaces/:workspaceId/forms/:formId/unpublish', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['workspaceId', 'formId'],
+        properties: {
+          workspaceId: { type: 'string' },
+          formId:      { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { workspaceId, formId } = request.params;
+
+    await assertFormBelongsToWorkspace(formId, workspaceId);
+
+    const updated = await prisma.form.update({
+      where: { id: formId },
+      data: { isPublished: false },
+      include: {
+        blocks: { orderBy: { order: 'asc' } },
+        _count: { select: { submissions: true } },
+      },
+    });
+
+    request.log.info({ formId }, 'Formulário despublicado.');
+    return reply.send(updated);
+  });
+
+  // ===========================================================================
+  // POST /workspaces/:workspaceId/forms/:formId/discard — Descartar rascunho
+  // ===========================================================================
+  //
+  // ╔═══════════════════════════════════════════════════════════════════════╗
+  // ║  OPERAÇÃO CRÍTICA: Restaura os blocos da tabela FormBlock para o    ║
+  // ║  estado EXATO do último snapshot publicado (publishedBlocks).       ║
+  // ║                                                                     ║
+  // ║  REGRA ENTERPRISE — PRESERVAÇÃO ABSOLUTA DE IDs:                    ║
+  // ║  Os blocos são recriados com os IDs ORIGINAIS do snapshot JSON.     ║
+  // ║  Isso garante que respostas antigas na tabela Submission continuem  ║
+  // ║  rastreáveis aos blocos corretos, preservando o analytics do funil. ║
+  // ║                                                                     ║
+  // ║  ACID: Toda a operação (delete + create) ocorre numa única          ║
+  // ║  $transaction. O banco nunca fica sem blocos, mesmo com falha.      ║
+  // ╚═══════════════════════════════════════════════════════════════════════╝
+  //
+  // ===========================================================================
+  fastify.post('/workspaces/:workspaceId/forms/:formId/discard', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['workspaceId', 'formId'],
+        properties: {
+          workspaceId: { type: 'string' },
+          formId:      { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { workspaceId, formId } = request.params;
+
+    const form = await assertFormBelongsToWorkspace(formId, workspaceId);
+
+    if (!form.publishedBlocks || !Array.isArray(form.publishedBlocks)) {
+      throw fastify.httpErrors.conflict(
+        'Não há versão publicada para restaurar. Publique o formulário pelo menos uma vez antes de descartar.'
+      );
+    }
+
+    const snapshot = form.publishedBlocks;
+
+    // -----------------------------------------------------------------
+    // TRANSAÇÃO ACID:
+    //   1. Remove TODOS os blocos de rascunho atuais.
+    //   2. Recria os blocos a partir do snapshot com IDs originais.
+    //   3. Reseta a flag de rascunho pendente.
+    //
+    // Se qualquer etapa falhar, o PostgreSQL faz rollback completo.
+    // -----------------------------------------------------------------
+    const operations = [
+      // 1. Limpa os blocos de rascunho.
+      prisma.formBlock.deleteMany({ where: { formId } }),
+    ];
+
+    // 2. Recria cada bloco com o ID original do snapshot.
+    for (const block of snapshot) {
+      operations.push(
+        prisma.formBlock.create({
+          data: {
+            id:       block.id,
+            type:     block.type,
+            order:    block.order,
+            config:   block.config || {},
+            label:    block.label || null,
+            required: block.required !== undefined ? block.required : true,
+            formId,
+          },
+        })
+      );
+    }
+
+    // 3. Reseta a flag de rascunho.
+    operations.push(
+      prisma.form.update({
+        where: { id: formId },
+        data: { hasUnpublishedChanges: false },
+      })
+    );
+
+    await prisma.$transaction(operations);
+
+    // Retorna o form atualizado com os blocos restaurados.
+    const restored = await prisma.form.findFirst({
+      where: { id: formId, workspaceId },
+      include: {
+        blocks: { orderBy: { order: 'asc' } },
+        _count: { select: { submissions: true } },
+      },
+    });
+
+    request.log.info(
+      { formId, blocksRestored: snapshot.length },
+      'Rascunho descartado — blocos restaurados do snapshot de produção.'
+    );
+
+    return reply.send(restored);
   });
 }

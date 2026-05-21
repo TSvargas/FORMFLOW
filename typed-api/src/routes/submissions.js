@@ -61,6 +61,8 @@ export default async function submissionsRoutes(fastify) {
           orderBy: { order: 'asc' },
         },
       },
+      // publishedBlocks é incluído automaticamente (não precisa de select/include
+      // pois é um campo escalar do model Form, não uma relação).
     });
 
     if (!form) {
@@ -110,6 +112,30 @@ export default async function submissionsRoutes(fastify) {
 
     const form = await findPublishedForm(slug, preview === 'true');
 
+    // -----------------------------------------------------------------
+    // ROTA PÚBLICA — Servir snapshot de produção (Enterprise)
+    // -----------------------------------------------------------------
+    // Se NÃO for preview e existir um snapshot publicado, servimos o
+    // JSON pré-serializado diretamente. Isso é O(1) — sem JOINs,
+    // sem ordenação, sem queries extras na tabela FormBlock.
+    //
+    // Fallback: Se publishedBlocks for null (formulários antigos ou
+    // nunca publicados via nova feature), servimos da tabela FormBlock
+    // para manter compatibilidade retroativa.
+    // -----------------------------------------------------------------
+    const isPreview = preview === 'true';
+    const hasSnapshot = form.publishedBlocks && Array.isArray(form.publishedBlocks);
+    const blocksToServe = (!isPreview && hasSnapshot)
+      ? form.publishedBlocks
+      : form.blocks.map((block) => ({
+          id: block.id,
+          type: block.type,
+          order: block.order,
+          label: block.label,
+          config: block.config,
+          required: block.required,
+        }));
+
     // Monta a resposta pública — omite campos internos que o lead
     // não precisa (e não deve) ver.
     const publicForm = {
@@ -120,14 +146,7 @@ export default async function submissionsRoutes(fastify) {
       displayMode: form.displayMode,
       branding: form.branding,
       settings: form.settings,
-      blocks: form.blocks.map((block) => ({
-        id: block.id,
-        type: block.type,
-        order: block.order,
-        label: block.label,
-        config: block.config,
-        required: block.required,
-      })),
+      blocks: blocksToServe,
     };
 
     return reply.send(publicForm);
@@ -225,6 +244,31 @@ export default async function submissionsRoutes(fastify) {
       { submissionId: submission.id, formSlug: slug, formId: form.id },
       'Lead capturado com sucesso.'
     );
+
+    // -----------------------------------------------------------------
+    // DISPARO ASSÍNCRONO DE WEBHOOK (Fire-and-Forget)
+    // -----------------------------------------------------------------
+    const webhookUrl = form.settings?.webhookUrl;
+    if (webhookUrl && typeof webhookUrl === 'string') {
+      const webhookPayload = {
+        submissionId: submission.id,
+        formSlug: slug,
+        payload,
+        metadata: enrichedMetadata,
+        createdAt: submission.createdAt
+      };
+
+      fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(webhookPayload)
+      }).catch(err => {
+        request.log.error(
+          { submissionId: submission.id, webhookUrl, err: err.message },
+          'Falha no disparo do webhook'
+        );
+      });
+    }
 
     // Retorna apenas o ID e timestamp — nunca devolver dados do lead
     // de volta ao browser por questões de privacidade.

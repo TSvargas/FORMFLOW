@@ -1,30 +1,8 @@
-// =============================================================================
-// TypeD V2 — ChatRenderer (Motor Visual do Modo Chat)
-// =============================================================================
-//
-// RESPONSABILIDADE:
-// Renderiza o formulário como uma interface conversacional tipo iMessage.
-// Gerencia sua própria timeline visual (mensagens + typing + delays)
-// consumindo dados e ações do FormEngine via useFormEngine().
-//
-// ARQUITETURA INTERNA:
-// O ChatRenderer mantém estado visual PRÓPRIO (messages[], isTyping)
-// separado do FormEngine. Isso é necessário porque o chat precisa de:
-//   - Delay de digitação antes de cada mensagem do bot
-//   - Acumulação visual de histórico de mensagens
-//   - Timing diferente do avanço lógico do FormEngine
-//
-// O FormEngine é usado apenas para:
-//   - formConfig/blocks (dados)
-//   - submitAnswer() (gravar respostas)
-//   - submitFinal() (submissão final)
-//   - status (loading/error/completed)
-//   - answers (acumuladas)
-//
-// =============================================================================
-
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useFormEngine } from '../context/FormEngineProvider.jsx';
+import PhoneInput, { isValidPhoneNumber } from 'react-phone-number-input';
+import 'react-phone-number-input/style.css';
+import { validateInput } from '../lib/validation.js';
 import './ChatRenderer.css';
 
 // =============================================================================
@@ -56,9 +34,11 @@ function MessageBubble({ sender, children }) {
 // =============================================================================
 // Renderiza o campo de input adequado ao tipo do bloco atual.
 // Cada tipo recebe onSubmit(value) para enviar a resposta.
+// Inclui validação rígida para EMAIL e PHONE.
 // =============================================================================
 function BlockInput({ block, onSubmit }) {
   const [value, setValue] = useState('');
+  const [error, setError] = useState(null);
   const inputRef = useRef(null);
 
   // Auto-focus quando o input aparece.
@@ -67,15 +47,24 @@ function BlockInput({ block, onSubmit }) {
     return () => clearTimeout(timer);
   }, [block?.id]);
 
-  // Reset do valor quando o bloco muda.
-  useEffect(() => { setValue(''); }, [block?.id]);
+  // Reset do valor e erro quando o bloco muda.
+  useEffect(() => { setValue(''); setError(null); }, [block?.id]);
 
   const handleSubmit = useCallback(() => {
     const trimmed = typeof value === 'string' ? value.trim() : value;
     if (!trimmed && trimmed !== 0) return;
+
+    // Validação rígida
+    const validation = validateInput(block?.type, value);
+    if (!validation.valid) {
+      setError(validation.message);
+      return;
+    }
+
+    setError(null);
     onSubmit(trimmed);
     setValue('');
-  }, [value, onSubmit]);
+  }, [value, onSubmit, block?.type]);
 
   const handleKeyDown = useCallback((e) => {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -88,6 +77,11 @@ function BlockInput({ block, onSubmit }) {
 
   const { type, config = {} } = block;
   const placeholder = config.placeholder || 'Digite sua resposta...';
+
+  // --- Mensagem de erro visual ---
+  const ErrorMessage = error ? (
+    <span className="td-chat-input-error">{error}</span>
+  ) : null;
 
   // --- INPUT_BUTTONS / INPUT_SELECT ---
   if (type === 'INPUT_BUTTONS' || type === 'INPUT_SELECT') {
@@ -136,10 +130,71 @@ function BlockInput({ block, onSubmit }) {
             className="td-chat-input-field td-chat-input-field--textarea"
             placeholder={placeholder}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => { setValue(e.target.value); setError(null); }}
             onKeyDown={handleKeyDown}
             rows={3}
           />
+          {ErrorMessage}
+        </div>
+        <button
+          className="td-chat-send-btn"
+          onClick={handleSubmit}
+          disabled={!value.trim()}
+          type="button"
+          aria-label="Enviar"
+        >
+          ➤
+        </button>
+      </div>
+    );
+  }
+
+  // --- INPUT_PHONE: Componente com seletor de país e máscara ---
+  if (type === 'INPUT_PHONE') {
+    return (
+      <div className="td-chat-input-area">
+        <div className="td-chat-input-wrapper">
+          <PhoneInput
+            ref={inputRef}
+            international
+            defaultCountry="BR"
+            placeholder={placeholder}
+            value={value}
+            onChange={(val) => { setValue(val || ''); setError(null); }}
+            onKeyDown={handleKeyDown}
+            className="td-chat-phone-input"
+          />
+          {ErrorMessage}
+        </div>
+        <button
+          className="td-chat-send-btn"
+          onClick={handleSubmit}
+          disabled={!value}
+          type="button"
+          aria-label="Enviar"
+        >
+          ➤
+        </button>
+      </div>
+    );
+  }
+
+  // --- INPUT_EMAIL: Input com validação visual ---
+  if (type === 'INPUT_EMAIL') {
+    return (
+      <div className="td-chat-input-area">
+        <div className="td-chat-input-wrapper">
+          <input
+            ref={inputRef}
+            type="email"
+            className={`td-chat-input-field ${error ? 'td-chat-input-field--error' : ''}`}
+            placeholder={placeholder}
+            value={value}
+            onChange={(e) => { setValue(e.target.value); setError(null); }}
+            onKeyDown={handleKeyDown}
+            autoComplete="email"
+          />
+          {ErrorMessage}
         </div>
         <button
           className="td-chat-send-btn"
@@ -157,15 +212,13 @@ function BlockInput({ block, onSubmit }) {
   // --- Mapeamento de type → input HTML type ---
   const inputTypeMap = {
     INPUT_TEXT: 'text',
-    INPUT_EMAIL: 'email',
-    INPUT_PHONE: 'tel',
     INPUT_NUMBER: 'number',
     INPUT_DATE: 'date',
   };
 
   const htmlType = inputTypeMap[type] || 'text';
 
-  // --- Input padrão (text, email, phone, number, date) ---
+  // --- Input padrão (text, number, date) ---
   return (
     <div className="td-chat-input-area">
       <div className="td-chat-input-wrapper">
@@ -175,10 +228,11 @@ function BlockInput({ block, onSubmit }) {
           className="td-chat-input-field"
           placeholder={placeholder}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => { setValue(e.target.value); setError(null); }}
           onKeyDown={handleKeyDown}
-          autoComplete={type === 'INPUT_EMAIL' ? 'email' : type === 'INPUT_PHONE' ? 'tel' : 'off'}
+          autoComplete="off"
         />
+        {ErrorMessage}
       </div>
       <button
         className="td-chat-send-btn"
@@ -218,7 +272,7 @@ export default function ChatRenderer() {
   const timeoutRef = useRef(null);
 
   const blocks = formConfig?.blocks || [];
-  const typingDelay = formConfig?.settings?.typingDelay ?? 1200;
+  const typingDelay = formConfig?.settings?.typingDelay ?? 500;
 
   // -------------------------------------------------------------------------
   // BRANDING: Aplicar cor de acento via CSS variable
@@ -242,6 +296,8 @@ export default function ChatRenderer() {
   useEffect(() => {
     return () => {
       if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      isProcessingRef.current = false;
+      setIsTyping(false);
     };
   }, []);
 
@@ -305,18 +361,58 @@ export default function ChatRenderer() {
           ? (config.duration || 2000)
           : typingDelay;
 
-        timeoutRef.current = setTimeout(() => {
-          setIsTyping(false);
+        // Só desliga a animação se o próximo bloco não for de digitação
+        const willNextBlockType = (currentIndex) => {
+          let idx = currentIndex + 1;
+          while (idx < blocks.length) {
+            const nextBlock = blocks[idx];
+            if (nextBlock.type === 'WEBHOOK' || nextBlock.type === 'REDIRECT') {
+              idx++;
+              continue;
+            }
+            return true;
+          }
+          return false;
+        };
 
+        timeoutRef.current = setTimeout(() => {
           // TEXT mostra mensagem; WAIT é silencioso.
           if (type === 'TEXT') {
-            const text = config.message || label || '...';
+            const primaryText = label || config.message || '...';
+            const secondaryText = label && config.message ? config.message : null;
+
             setMessages((prev) => [...prev, {
               id: `msg-${block.id}`,
               sender: 'bot',
-              content: text,
+              content: primaryText,
               blockType: type,
             }]);
+
+            if (secondaryText) {
+              scrollToBottom();
+              // Agenda a segunda mensagem após o typingDelay
+              timeoutRef.current = setTimeout(() => {
+                setMessages((prev) => [...prev, {
+                  id: `msg-${block.id}-extra`,
+                  sender: 'bot',
+                  content: secondaryText,
+                  blockType: type,
+                }]);
+
+                if (!willNextBlockType(processingIndex)) {
+                  setIsTyping(false);
+                }
+
+                isProcessingRef.current = false;
+                setProcessingIndex((prev) => prev + 1);
+                scrollToBottom();
+              }, typingDelay);
+              return;
+            }
+          }
+
+          if (!willNextBlockType(processingIndex)) {
+            setIsTyping(false);
           }
 
           isProcessingRef.current = false;
@@ -404,12 +500,16 @@ export default function ChatRenderer() {
   }
 
   if (status === 'completed') {
+    const endBlock = [...blocks].reverse().find(b => b.type === 'END_SCREEN');
+    const title = endBlock?.label || 'Respostas enviadas!';
+    const message = endBlock?.config?.message || 'Obrigado por completar o formulário.';
+
     return (
       <div className="td-chat-container" style={{ '--td-accent': accentColor }}>
         <div className="td-chat-completed">
           <div className="td-chat-completed-icon">✓</div>
-          <h2>Respostas enviadas!</h2>
-          <p>Obrigado por completar o formulário.</p>
+          <h2>{title}</h2>
+          <p>{message}</p>
         </div>
       </div>
     );

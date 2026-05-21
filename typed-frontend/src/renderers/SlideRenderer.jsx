@@ -24,6 +24,9 @@
 
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useFormEngine } from '../context/FormEngineProvider.jsx';
+import PhoneInput from 'react-phone-number-input';
+import 'react-phone-number-input/style.css';
+import { validateInput } from '../lib/validation.js';
 import './SlideRenderer.css';
 
 // =============================================================================
@@ -31,14 +34,17 @@ import './SlideRenderer.css';
 // =============================================================================
 // Similar ao ChatRenderer mas com styling maior e centralizado.
 // Cada tipo recebe onSubmit(value) para enviar a resposta.
+// Inclui validação rígida para EMAIL e PHONE.
 // =============================================================================
 function SlideInput({ block, onSubmit }) {
   const [value, setValue] = useState('');
+  const [error, setError] = useState(null);
   const inputRef = useRef(null);
 
   // Auto-focus ao montar e quando o bloco muda.
   useEffect(() => {
     setValue('');
+    setError(null);
     const timer = setTimeout(() => inputRef.current?.focus(), 150);
     return () => clearTimeout(timer);
   }, [block?.id]);
@@ -46,8 +52,17 @@ function SlideInput({ block, onSubmit }) {
   const handleSubmit = useCallback(() => {
     const trimmed = typeof value === 'string' ? value.trim() : value;
     if (!trimmed && trimmed !== 0) return;
+
+    // Validação rígida
+    const validation = validateInput(block?.type, value);
+    if (!validation.valid) {
+      setError(validation.message);
+      return;
+    }
+
+    setError(null);
     onSubmit(trimmed);
-  }, [value, onSubmit]);
+  }, [value, onSubmit, block?.type]);
 
   // Navegação por teclado global.
   useEffect(() => {
@@ -69,6 +84,11 @@ function SlideInput({ block, onSubmit }) {
 
   const { type, config = {} } = block;
   const placeholder = config.placeholder || 'Digite aqui...';
+
+  // --- Mensagem de erro visual ---
+  const ErrorMessage = error ? (
+    <span className="td-slide-input-error">{error}</span>
+  ) : null;
 
   // --- INPUT_BUTTONS / INPUT_SELECT: Grid de opções ---
   if (type === 'INPUT_BUTTONS' || type === 'INPUT_SELECT') {
@@ -112,9 +132,68 @@ function SlideInput({ block, onSubmit }) {
           className="td-slide-textarea"
           placeholder={placeholder}
           value={value}
-          onChange={(e) => setValue(e.target.value)}
+          onChange={(e) => { setValue(e.target.value); setError(null); }}
           rows={4}
         />
+        {ErrorMessage}
+        <button
+          className="td-slide-cta"
+          onClick={handleSubmit}
+          disabled={!value.trim()}
+          type="button"
+        >
+          Continuar
+        </button>
+        <span className="td-slide-cta-hint">
+          ou pressione <kbd>Enter</kbd>
+        </span>
+      </>
+    );
+  }
+
+  // --- INPUT_PHONE: Componente com seletor de país e máscara ---
+  if (type === 'INPUT_PHONE') {
+    return (
+      <>
+        <PhoneInput
+          ref={inputRef}
+          international
+          defaultCountry="BR"
+          placeholder={placeholder}
+          value={value}
+          onChange={(val) => { setValue(val || ''); setError(null); }}
+          className="td-slide-phone-input"
+        />
+        {ErrorMessage}
+        <button
+          className="td-slide-cta"
+          onClick={handleSubmit}
+          disabled={!value}
+          type="button"
+        >
+          Continuar
+        </button>
+        <span className="td-slide-cta-hint">
+          ou pressione <kbd>Enter</kbd>
+        </span>
+      </>
+    );
+  }
+
+  // --- INPUT_EMAIL: Input com validação visual ---
+  if (type === 'INPUT_EMAIL') {
+    return (
+      <>
+        <input
+          ref={inputRef}
+          type="email"
+          className={`td-slide-input ${error ? 'td-slide-input--error' : ''}`}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => { setValue(e.target.value); setError(null); }}
+          autoComplete="email"
+        />
+        {ErrorMessage}
         <button
           className="td-slide-cta"
           onClick={handleSubmit}
@@ -133,8 +212,6 @@ function SlideInput({ block, onSubmit }) {
   // --- Mapeamento de type → input HTML type ---
   const inputTypeMap = {
     INPUT_TEXT: 'text',
-    INPUT_EMAIL: 'email',
-    INPUT_PHONE: 'tel',
     INPUT_NUMBER: 'number',
     INPUT_DATE: 'date',
   };
@@ -150,9 +227,10 @@ function SlideInput({ block, onSubmit }) {
         className="td-slide-input"
         placeholder={placeholder}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
-        autoComplete={type === 'INPUT_EMAIL' ? 'email' : type === 'INPUT_PHONE' ? 'tel' : 'off'}
+        onChange={(e) => { setValue(e.target.value); setError(null); }}
+        autoComplete="off"
       />
+      {ErrorMessage}
       <button
         className="td-slide-cta"
         onClick={handleSubmit}
@@ -268,11 +346,16 @@ export default function SlideRenderer() {
   }
 
   if (status === 'completed') {
+    const blocks = formConfig?.blocks || [];
+    const endBlock = [...blocks].reverse().find(b => b.type === 'END_SCREEN');
+    const title = endBlock?.label || 'Respostas enviadas!';
+    const message = endBlock?.config?.message || 'Obrigado por completar o formulário. As suas respostas foram registadas com sucesso.';
+
     return (
       <div className="td-slide-completed" style={{ '--td-accent': accentColor }}>
         <div className="td-slide-completed-icon">✓</div>
-        <h2>Respostas enviadas!</h2>
-        <p>Obrigado por completar o formulário. As suas respostas foram registadas com sucesso.</p>
+        <h2>{title}</h2>
+        <p>{message}</p>
       </div>
     );
   }

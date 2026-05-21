@@ -194,6 +194,27 @@ model Form {
   /// Ex: { "typingDelay": 1500, "showProgressBar": true }
   settings    Json        @default("{}")
 
+  /// Snapshot JSON dos blocos no momento da última publicação.
+  /// Contém a versão EXATA dos blocos que os leads veem na rota pública.
+  /// Quando null, o formulário nunca foi publicado (ou foi criado antes
+  /// dessa feature — nesse caso, a rota pública faz fallback para FormBlock).
+  ///
+  /// DECISÃO ARQUITETURAL: Armazenar como JSON ao invés de tabela separada
+  /// porque a leitura pública é a rota mais quente da aplicação (cada lead
+  /// faz uma request), e servir um JSON pré-serializado é O(1) — sem JOINs,
+  /// sem ordenação, sem queries extras.
+  publishedBlocks Json?
+
+  /// Flag determinística que indica se existem alterações de rascunho
+  /// que ainda não foram publicadas. É setada para TRUE automaticamente
+  /// em qualquer mutação de blocos (criar, editar, excluir, reordenar)
+  /// e resetada para FALSE apenas no endpoint /publish.
+  ///
+  /// DECISÃO ARQUITETURAL: Flag booleana ao invés de comparação profunda
+  /// (deep diff) entre rascunho e snapshot. Isso é determinístico, rápido
+  /// e à prova de bugs de deep-merge em campos JSONB aninhados.
+  hasUnpublishedChanges Boolean @default(false)
+
   workspaceId String
 
   workspace   Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)

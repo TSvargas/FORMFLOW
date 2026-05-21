@@ -143,16 +143,10 @@ export async function apiFetch(path, options = {}) {
 // MÉTODOS ESPECÍFICOS DA API PÚBLICA
 // =============================================================================
 
-/**
- * Busca os dados públicos de um formulário pelo slug.
- * Retorna: form config + blocos ordenados + displayMode.
- *
- * @param {string} slug
- * @param {AbortSignal} [signal]
- * @returns {Promise<object>}
- */
-export function fetchPublicForm(slug, signal) {
-  return apiFetch(`/api/f/${encodeURIComponent(slug)}`, { signal });
+export function fetchPublicForm(slug, options = {}) {
+  const { signal, preview } = options;
+  const query = preview ? '?preview=true' : '';
+  return apiFetch(`/api/f/${encodeURIComponent(slug)}${query}`, { signal });
 }
 
 /**
@@ -245,6 +239,31 @@ export function reorderBlocks(workspaceId, formId, orderedIds, signal) {
   return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}/blocks/reorder`, {
     method: 'PUT',
     body: { orderedIds },
+    signal,
+  });
+}
+
+// =============================================================================
+// MÉTODOS DE PUBLICAÇÃO (Draft → Production)
+// =============================================================================
+
+export function publishForm(workspaceId, formId, signal) {
+  return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}/publish`, {
+    method: 'POST',
+    signal,
+  });
+}
+
+export function unpublishForm(workspaceId, formId, signal) {
+  return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}/unpublish`, {
+    method: 'POST',
+    signal,
+  });
+}
+
+export function discardDraft(workspaceId, formId, signal) {
+  return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}/discard`, {
+    method: 'POST',
     signal,
   });
 }

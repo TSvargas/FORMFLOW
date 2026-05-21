@@ -96,8 +96,9 @@ function formReducer(state, action) {
 
     // --- Navegação ---
     case 'SUBMIT_ANSWER': {
-      const { blockId, value } = action.payload;
-      const updatedAnswers = { ...state.answers, [blockId]: value };
+      const { blockId, variableName, value } = action.payload;
+      const key = variableName || blockId;
+      const updatedAnswers = { ...state.answers, [key]: value };
       const totalBlocks = state.formConfig?.blocks?.length ?? 0;
       const nextIndex = state.currentStepIndex + 1;
 
@@ -193,9 +194,10 @@ function collectMetadata() {
 /**
  * @param {object} props
  * @param {string} props.slug - Slug do formulário a carregar
+ * @param {boolean} [props.preview] - Indica se é modo preview
  * @param {React.ReactNode} props.children
  */
-export function FormEngineProvider({ slug, children }) {
+export function FormEngineProvider({ slug, preview, children }) {
   const [state, dispatch] = useReducer(formReducer, initialState);
 
   // Refs para prevenir double-submit e manter referência estável.
@@ -218,7 +220,7 @@ export function FormEngineProvider({ slug, children }) {
       dispatch({ type: 'FETCH_START' });
 
       try {
-        const data = await fetchPublicForm(slug, controller.signal);
+        const data = await fetchPublicForm(slug, { signal: controller.signal, preview });
 
         // SEGURANÇA: Validar estrutura mínima da resposta.
         // Previne crash se a API retornar dados inesperados.
@@ -240,7 +242,7 @@ export function FormEngineProvider({ slug, children }) {
     loadForm();
 
     return () => controller.abort();
-  }, [slug]);
+  }, [slug, preview]);
 
   // -------------------------------------------------------------------------
   // COMPUTED: Bloco atual derivado do estado
@@ -262,14 +264,17 @@ export function FormEngineProvider({ slug, children }) {
   const submitAnswer = useCallback(async (blockId, value) => {
     if (!state.formConfig) return;
 
+    const block = state.formConfig.blocks.find(b => b.id === blockId);
+    const variableName = block?.config?.variableName || blockId;
+
     // Avança o step no estado local.
-    dispatch({ type: 'SUBMIT_ANSWER', payload: { blockId, value } });
+    dispatch({ type: 'SUBMIT_ANSWER', payload: { blockId, variableName, value } });
 
     // Salva parcialmente no backend (fire-and-forget, sem bloquear UX).
     // O try/catch silencioso é intencional — se o partial save falhar,
     // o lead ainda pode completar o form normalmente.
     try {
-      const updatedAnswers = { ...state.answers, [blockId]: value };
+      const updatedAnswers = { ...state.answers, [variableName]: value };
       const result = await savePartial(
         slug,
         updatedAnswers,

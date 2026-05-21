@@ -402,3 +402,61 @@
     padding: 0.75rem 1rem;
   }
 }
+
+/* --- Validação: Mensagem de Erro --- */
+.td-chat-input-error {
+  display: block;
+  font-size: 0.78rem;
+  color: #dc2626;
+  padding: 0.25rem 0.5rem 0;
+  animation: td-chat-fadeInUp 0.2s ease-out;
+}
+
+/* --- Validação: Borda de Erro --- */
+.td-chat-input-field--error {
+  border-color: #dc2626 !important;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.1) !important;
+}
+
+/* --- Phone Input: Integração com react-phone-number-input --- */
+.td-chat-phone-input {
+  width: 100%;
+}
+
+.td-chat-phone-input .PhoneInputInput {
+  width: 100%;
+  padding: 0.7rem 1rem;
+  border: 1.5px solid #e4e6ea;
+  border-radius: 22px;
+  font-size: 0.95rem;
+  font-family: inherit;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
+  background: #f8f9fa;
+  color: #1a1a2e;
+  box-sizing: border-box;
+}
+
+.td-chat-phone-input .PhoneInputInput:focus {
+  border-color: var(--td-accent, #6C63FF);
+  box-shadow: 0 0 0 3px rgba(108, 99, 255, 0.1);
+  background: #ffffff;
+}
+
+.td-chat-phone-input .PhoneInputInput::placeholder {
+  color: #b0b3b8;
+}
+
+.td-chat-phone-input .PhoneInputCountry {
+  margin-right: 0.5rem;
+}
+
+.td-chat-phone-input .PhoneInputCountrySelect {
+  font-size: 0.9rem;
+  font-family: inherit;
+}
+
+.td-chat-phone-input .PhoneInputCountryIcon {
+  width: 24px;
+  height: 18px;
+}

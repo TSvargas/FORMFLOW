@@ -299,6 +299,71 @@
   transform: scale(0.96);
 }
 
+/* --- Inline Options (Interactive Bubbles in Chat Feed) --- */
+.td-chat-inline-options {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.2rem;
+  margin-bottom: 0.8rem;
+  align-items: stretch;
+  width: fit-content;
+  min-width: 280px;
+  max-width: 100%;
+  animation: td-chat-fadeInUp 0.3s ease-out;
+  padding-left: 0.5rem;
+  padding-right: 0.5rem;
+  box-sizing: border-box;
+}
+
+.td-chat-inline-options--row {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: flex-start;
+}
+
+.td-chat-inline-btn {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  padding: 0.9rem 1.15rem;
+  border-radius: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  background: var(--td-secondary, #ffffff);
+  color: var(--td-text, #1a1a2e);
+  font-size: 0.95rem;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
+}
+
+.td-chat-inline-btn:hover {
+  background: rgba(0, 0, 0, 0.03);
+  border-color: var(--td-accent, #6C63FF);
+}
+
+.td-chat-inline-btn-arrow {
+  color: #8c8c9a;
+  font-size: 1.15rem;
+  line-height: 1;
+  transition: transform 0.2s, color 0.2s;
+  opacity: 0.8;
+}
+
+.td-chat-inline-btn:hover .td-chat-inline-btn-arrow {
+  transform: translateX(4px);
+  color: var(--td-accent, #6C63FF);
+  opacity: 1;
+}
+
+.td-chat-inline-btn:active {
+  transform: scale(0.98);
+}
+
 /* --- Tela Final / Completed --- */
 .td-chat-completed {
   display: flex;
@@ -411,6 +476,11 @@
 
   .td-chat-header {
     padding: 0.75rem 1rem;
+  }
+
+  .td-chat-inline-options {
+    width: 100%;
+    min-width: 0;
   }
 }
 

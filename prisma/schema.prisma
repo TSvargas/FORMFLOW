@@ -60,6 +60,8 @@ enum BlockType {
   INPUT_NUMBER   // Campo numérico
   INPUT_DATE     // Seletor de data
   INPUT_FILE     // Upload de arquivo
+  INPUT_CPF      // CPF com validação e máscara
+  INPUT_RATING   // Avaliação por estrelas/números
   WEBHOOK        // Disparo de webhook intermediário
   REDIRECT       // Redirecionamento (WhatsApp, URL externa)
   END_SCREEN     // Tela final / agradecimento

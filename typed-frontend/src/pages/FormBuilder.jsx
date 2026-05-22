@@ -25,8 +25,13 @@ const AVAILABLE_BLOCKS = [
   { type: 'INPUT_TEXT', label: 'Texto Curto' },
   { type: 'INPUT_EMAIL', label: 'Email' },
   { type: 'INPUT_PHONE', label: 'Telefone' },
+  { type: 'INPUT_CPF', label: 'CPF' },
   { type: 'INPUT_TEXTAREA', label: 'Texto Longo' },
   { type: 'INPUT_SELECT', label: 'Múltipla Escolha' },
+  { type: 'INPUT_BUTTONS_SIM_NAO', label: 'Sim/Não' },
+  { type: 'INPUT_DATE', label: 'Data/Agendamento' },
+  { type: 'INPUT_RATING', label: 'Avaliação' },
+  { type: 'REDIRECT', label: 'Link/Redirecionamento' },
   { type: 'END_SCREEN', label: 'Ecrã Final' },
   { type: 'WAIT', label: 'Atraso (Tempo)' },
 ];
@@ -44,6 +49,11 @@ export default function FormBuilder() {
   const [isSaving, setIsSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [webhookSaved, setWebhookSaved] = useState(false);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+
+  // Drag and Drop
+  const [draggedType, setDraggedType] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
 
   // Debounce ref para auto-save
   const debounceTimerRef = useState(null);
@@ -69,14 +79,29 @@ export default function FormBuilder() {
   // AÇÕES DE BLOCOS
   // ===========================================================================
 
-  async function handleAddBlock(type) {
+  async function handleAddBlock(rawType, insertIndex = null) {
     setIsSaving(true);
     try {
-      const isSelect = type === 'INPUT_SELECT' || type === 'INPUT_BUTTONS';
-      const isWait = type === 'WAIT';
+      let type = rawType;
+      let initialConfig = {};
+
+      if (rawType === 'INPUT_BUTTONS_SIM_NAO') {
+        type = 'INPUT_BUTTONS';
+        initialConfig = { options: ['Sim', 'Não'] };
+      } else if (rawType === 'REDIRECT') {
+        initialConfig = { url: 'https://', buttonText: 'Acessar Link' };
+      } else if (rawType === 'INPUT_DATE') {
+        initialConfig = { calendarProvider: 'native', enableTime: false };
+      } else if (rawType === 'INPUT_RATING') {
+        initialConfig = { maxScore: 5 };
+      } else {
+        const isSelect = type === 'INPUT_SELECT' || type === 'INPUT_BUTTONS';
+        initialConfig = isSelect ? { options: ['Opção 1', 'Opção 2'] } : (type === 'WAIT' ? { duration: 1200 } : { placeholder: 'Digite aqui...' });
+      }
+
       const isInput = type.startsWith('INPUT_');
-      
-      let initialConfig = isSelect ? { options: ['Opção 1', 'Opção 2'] } : (isWait ? { duration: 1200 } : { placeholder: 'Digite aqui...' });
+      const isWait = type === 'WAIT';
+
       if (isInput) {
         initialConfig.variableName = type.toLowerCase().replace('input_', '') + '_' + Math.floor(Math.random() * 1000);
       }
@@ -88,10 +113,24 @@ export default function FormBuilder() {
         required: isInput
       });
       
-      const updatedBlocks = [...blocks, newBlock];
-      setBlocks(updatedBlocks);
-      setSelectedBlockId(newBlock.id);
-      setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
+      let updatedBlocks = [...blocks, newBlock];
+      
+      if (insertIndex !== null && insertIndex < blocks.length) {
+        updatedBlocks = [...blocks];
+        updatedBlocks.splice(insertIndex, 0, newBlock);
+        
+        setBlocks(updatedBlocks);
+        setSelectedBlockId(newBlock.id);
+        
+        const orderedIds = updatedBlocks.map(b => b.id);
+        const reordered = await reorderBlocks(WORKSPACE_ID, formId, orderedIds);
+        setBlocks(reordered);
+        setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
+      } else {
+        setBlocks(updatedBlocks);
+        setSelectedBlockId(newBlock.id);
+        setForm(prev => ({ ...prev, hasUnpublishedChanges: true }));
+      }
     } catch (err) {
       alert(`Erro ao adicionar bloco: ${err.message}`);
     } finally {
@@ -209,6 +248,22 @@ export default function FormBuilder() {
       alert(`Erro ao salvar branding: ${err.message}`);
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleAvatarUpload(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setIsUploadingAvatar(true);
+    try {
+      const res = await uploadFile(WORKSPACE_ID, file);
+      const updatedBranding = { ...(form?.branding || {}), avatarUrl: res.url };
+      setForm(prev => ({ ...prev, branding: updatedBranding, hasUnpublishedChanges: true }));
+      await updateForm(WORKSPACE_ID, formId, { branding: updatedBranding });
+    } catch (err) {
+      alert(`Erro no upload do avatar: ${err.message}`);
+    } finally {
+      setIsUploadingAvatar(false);
     }
   }
 
@@ -389,16 +444,35 @@ export default function FormBuilder() {
         {/* BARRA ESQUERDA: Adicionar Blocos */}
         <aside style={styles.leftSidebar}>
           <h3 style={styles.sidebarTitle}>Adicionar Bloco</h3>
+          <p style={{fontSize: '0.8rem', color: '#666', marginBottom: '1rem', marginTop: '-0.5rem'}}>
+            Clique ou arraste para o fluxo.
+          </p>
           <div style={styles.blockList}>
             {AVAILABLE_BLOCKS.map(b => (
-              <button 
+              <div 
                 key={b.type} 
-                style={styles.addBlockBtn}
-                onClick={() => handleAddBlock(b.type)}
-                disabled={isSaving}
+                draggable={!isSaving}
+                onDragStart={(e) => {
+                  if (isSaving) {
+                    e.preventDefault();
+                    return;
+                  }
+                  e.dataTransfer.setData('blockType', b.type);
+                  setDraggedType(b.type);
+                }}
+                onDragEnd={() => setDraggedType(null)}
+                style={{
+                  ...styles.addBlockBtn,
+                  opacity: draggedType === b.type ? 0.5 : (isSaving ? 0.5 : 1),
+                  cursor: isSaving ? 'not-allowed' : 'grab',
+                  display: 'flex',
+                  alignItems: 'center',
+                }}
+                onClick={() => { if (!isSaving) handleAddBlock(b.type); }}
               >
-                + {b.label}
-              </button>
+                <span style={{marginRight: '8px', color: '#ccc', fontSize: '1.2rem', lineHeight: '1'}}>⋮⋮</span>
+                {b.label}
+              </div>
             ))}
           </div>
 
@@ -437,19 +511,50 @@ export default function FormBuilder() {
         <main style={styles.mainContent} onClick={() => setSelectedBlockId(null)}>
           <div style={styles.flowContainer}>
             {blocks.length === 0 ? (
-              <div style={styles.emptyFlow}>
-                <p>Nenhum bloco adicionado. Comece por adicionar um bloco na barra lateral.</p>
+              <div 
+                style={{...styles.emptyFlow, minHeight: '200px', display: 'flex', alignItems: 'center', justifyContent: 'center', border: dragOverIndex === 0 ? '2px dashed #4f46e5' : '2px dashed #ccc', backgroundColor: dragOverIndex === 0 ? '#eef2ff' : '#fff'}}
+                onDragOver={(e) => { e.preventDefault(); setDragOverIndex(0); }}
+                onDragLeave={() => setDragOverIndex(null)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverIndex(null);
+                  const type = e.dataTransfer.getData('blockType');
+                  if (type) handleAddBlock(type, 0);
+                }}
+              >
+                <p>Nenhum bloco adicionado. Comece por clicar ou arrastar um bloco da barra lateral.</p>
               </div>
             ) : (
               blocks.map((block, index) => (
-                <div 
-                  key={block.id} 
-                  style={{
-                    ...styles.flowBlock, 
-                    ...(selectedBlockId === block.id ? styles.flowBlockActive : {})
-                  }}
-                  onClick={(e) => { e.stopPropagation(); setSelectedBlockId(block.id); }}
-                >
+                <div key={block.id}>
+                  {/* Drop zone antes do bloco */}
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); setDragOverIndex(index); }}
+                    onDragLeave={() => setDragOverIndex(null)}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      setDragOverIndex(null);
+                      const type = e.dataTransfer.getData('blockType');
+                      if (type) handleAddBlock(type, index);
+                    }}
+                    style={{
+                      height: dragOverIndex === index ? '40px' : '12px',
+                      margin: '-6px 0',
+                      borderRadius: '8px',
+                      backgroundColor: dragOverIndex === index ? '#eef2ff' : 'transparent',
+                      border: dragOverIndex === index ? '2px dashed #4f46e5' : '2px solid transparent',
+                      transition: 'all 0.2s',
+                      zIndex: 10,
+                      position: 'relative',
+                    }}
+                  />
+                  <div 
+                    style={{
+                      ...styles.flowBlock, 
+                      ...(selectedBlockId === block.id ? styles.flowBlockActive : {})
+                    }}
+                    onClick={(e) => { e.stopPropagation(); setSelectedBlockId(block.id); }}
+                  >
                   <div style={styles.flowBlockHeader}>
                     <span style={styles.blockTypeBadge}>{block.type}</span>
                     <div style={styles.blockActions}>
@@ -476,8 +581,34 @@ export default function FormBuilder() {
                     <strong>{block.label || '(Sem texto)'}</strong>
                   </div>
                 </div>
+                </div>
               ))
             )}
+            
+            {/* Drop zone final (apenas se houver blocos) */}
+            {blocks.length > 0 && (
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOverIndex(blocks.length); }}
+                onDragLeave={() => setDragOverIndex(null)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragOverIndex(null);
+                  const type = e.dataTransfer.getData('blockType');
+                  if (type) handleAddBlock(type, blocks.length);
+                }}
+                style={{
+                  height: dragOverIndex === blocks.length ? '40px' : '24px',
+                  marginTop: '0.5rem',
+                  borderRadius: '8px',
+                  backgroundColor: dragOverIndex === blocks.length ? '#eef2ff' : 'transparent',
+                  border: dragOverIndex === blocks.length ? '2px dashed #4f46e5' : '2px solid transparent',
+                  transition: 'all 0.2s',
+                  zIndex: 10,
+                  position: 'relative',
+                }}
+              />
+            )}
+            
             {isSaving && <div style={styles.savingIndicator}>A guardar alterações...</div>}
           </div>
         </main>
@@ -550,7 +681,100 @@ export default function FormBuilder() {
                 </div>
               )}
 
-              {selectedBlock.type.startsWith('INPUT_') && selectedBlock.type !== 'INPUT_BUTTONS' && selectedBlock.type !== 'INPUT_SELECT' && (
+              {selectedBlock.type === 'REDIRECT' && (
+                <>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>URL de Redirecionamento</label>
+                    <input 
+                      type="url"
+                      value={selectedBlock.config?.url || ''}
+                      onChange={(e) => handleBlockUpdateLocally(selectedBlock.id, 'config.url', e.target.value)}
+                      onBlur={() => handleSaveBlock(selectedBlock)}
+                      style={styles.input}
+                      placeholder="https://..."
+                    />
+                  </div>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Texto do Botão</label>
+                    <input 
+                      type="text"
+                      value={selectedBlock.config?.buttonText || ''}
+                      onChange={(e) => handleBlockUpdateLocally(selectedBlock.id, 'config.buttonText', e.target.value)}
+                      onBlur={() => handleSaveBlock(selectedBlock)}
+                      style={styles.input}
+                      placeholder="Ex: Acessar Link"
+                    />
+                  </div>
+                </>
+              )}
+
+              {selectedBlock.type === 'INPUT_DATE' && (
+                <>
+                  <div style={styles.formGroup}>
+                    <label style={styles.label}>Provedor de Calendário</label>
+                    <select
+                      value={selectedBlock.config?.calendarProvider || 'native'}
+                      onChange={(e) => {
+                        handleBlockUpdateLocally(selectedBlock.id, 'config.calendarProvider', e.target.value);
+                        handleSaveBlock({ ...selectedBlock, config: { ...selectedBlock.config, calendarProvider: e.target.value } });
+                      }}
+                      style={styles.input}
+                    >
+                      <option value="native">Nativo do Navegador</option>
+                      <option value="Calendly">Calendly</option>
+                      <option value="Cal.com">Cal.com</option>
+                    </select>
+                  </div>
+                  {(selectedBlock.config?.calendarProvider === 'Calendly' || selectedBlock.config?.calendarProvider === 'Cal.com') && (
+                    <div style={styles.formGroup}>
+                      <label style={styles.label}>URL do Evento da Equipa ({selectedBlock.config.calendarProvider})</label>
+                      <input 
+                        type="url"
+                        value={selectedBlock.config?.calendarUrl || ''}
+                        onChange={(e) => handleBlockUpdateLocally(selectedBlock.id, 'config.calendarUrl', e.target.value)}
+                        onBlur={() => handleSaveBlock(selectedBlock)}
+                        style={styles.input}
+                        placeholder={`https://${selectedBlock.config.calendarProvider === 'Calendly' ? 'calendly.com/seu-link' : 'cal.com/seu-link'}`}
+                      />
+                    </div>
+                  )}
+                  {(!selectedBlock.config?.calendarProvider || selectedBlock.config?.calendarProvider === 'native') && (
+                    <div style={styles.formGroup}>
+                      <label style={{...styles.label, display: 'flex', alignItems: 'center', gap: '0.5rem'}}>
+                        <input 
+                          type="checkbox"
+                          checked={selectedBlock.config?.enableTime || false}
+                          onChange={(e) => {
+                            handleBlockUpdateLocally(selectedBlock.id, 'config.enableTime', e.target.checked);
+                            handleSaveBlock({ ...selectedBlock, config: { ...selectedBlock.config, enableTime: e.target.checked } });
+                          }}
+                        />
+                        Permitir seleção de horário
+                      </label>
+                    </div>
+                  )}
+                </>
+              )}
+
+              {selectedBlock.type === 'INPUT_RATING' && (
+                <div style={styles.formGroup}>
+                  <label style={styles.label}>Escala Máxima</label>
+                  <select
+                    value={selectedBlock.config?.maxScore || 5}
+                    onChange={(e) => {
+                      const val = Number(e.target.value);
+                      handleBlockUpdateLocally(selectedBlock.id, 'config.maxScore', val);
+                      handleSaveBlock({ ...selectedBlock, config: { ...selectedBlock.config, maxScore: val } });
+                    }}
+                    style={styles.input}
+                  >
+                    <option value={5}>5 Estrelas</option>
+                    <option value={10}>0 a 10 Numérico</option>
+                  </select>
+                </div>
+              )}
+
+              {selectedBlock.type.startsWith('INPUT_') && selectedBlock.type !== 'INPUT_BUTTONS' && selectedBlock.type !== 'INPUT_SELECT' && selectedBlock.type !== 'INPUT_DATE' && selectedBlock.type !== 'INPUT_RATING' && (
                 <div style={styles.formGroup}>
                   <label style={styles.label}>Placeholder</label>
                   <input 

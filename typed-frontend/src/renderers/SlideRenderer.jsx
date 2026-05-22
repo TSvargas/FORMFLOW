@@ -29,6 +29,64 @@ import 'react-phone-number-input/style.css';
 import { validateInput } from '../lib/validation.js';
 import './SlideRenderer.css';
 
+function formatCPF(value) {
+  const v = value.replace(/\D/g, '').slice(0, 11);
+  if (v.length <= 3) return v;
+  if (v.length <= 6) return `${v.slice(0, 3)}.${v.slice(3)}`;
+  if (v.length <= 9) return `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6)}`;
+  return `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6, 9)}-${v.slice(9)}`;
+}
+
+// =============================================================================
+// SUB-COMPONENTE: IframeCalendarInput
+// =============================================================================
+function IframeCalendarInput({ block, onSubmit }) {
+  const { config = {} } = block;
+
+  useEffect(() => {
+    function handleMessage(e) {
+      let isSuccess = false;
+      if (config.calendarProvider === 'Calendly' && e.data?.event === 'calendly.event_scheduled') {
+        isSuccess = true;
+      } else if (config.calendarProvider === 'Cal.com') {
+        try {
+          const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+          if (data?.type === 'cal:booking:success') {
+            isSuccess = true;
+          }
+        } catch (err) {}
+      }
+
+      if (isSuccess) {
+        window.removeEventListener('message', handleMessage);
+        onSubmit('Reunião Agendada');
+      }
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [config.calendarProvider, onSubmit]);
+
+  if (!config.calendarUrl) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: '#888', backgroundColor: '#f8f9fa', borderRadius: '12px', width: '100%' }}>
+        <p>URL de agendamento não configurada.</p>
+        <button className="td-slide-cta" onClick={() => onSubmit('Sem resposta')} type="button" style={{marginTop: '1rem'}}>
+          Avançar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      src={config.calendarUrl}
+      style={{ width: '100%', height: '600px', border: 'none', borderRadius: '12px' }}
+      title="Agendamento"
+    />
+  );
+}
+
 // =============================================================================
 // SUB-COMPONENTE: Input por BlockType (versão Slide)
 // =============================================================================
@@ -50,18 +108,22 @@ function SlideInput({ block, onSubmit, branding }) {
   }, [block?.id]);
 
   const handleSubmit = useCallback(() => {
-    const trimmed = typeof value === 'string' ? value.trim() : value;
-    if (!trimmed && trimmed !== 0) return;
+    let finalValue = typeof value === 'string' ? value.trim() : value;
+    if (block?.type === 'INPUT_CPF') {
+      finalValue = typeof finalValue === 'string' ? finalValue.replace(/\D/g, '') : finalValue;
+    }
+
+    if (!finalValue && finalValue !== 0) return;
 
     // Validação rígida
-    const validation = validateInput(block?.type, value);
+    const validation = validateInput(block?.type, finalValue);
     if (!validation.valid) {
       setError(validation.message);
       return;
     }
 
     setError(null);
-    onSubmit(trimmed);
+    onSubmit(finalValue);
   }, [value, onSubmit, block?.type]);
 
   // Navegação por teclado global.
@@ -209,11 +271,84 @@ function SlideInput({ block, onSubmit, branding }) {
     );
   }
 
+  // --- INPUT_CPF ---
+  if (type === 'INPUT_CPF') {
+    return (
+      <>
+        <input
+          ref={inputRef}
+          type="text"
+          className={`td-slide-input ${error ? 'td-slide-input--error' : ''}`}
+          placeholder={placeholder || '000.000.000-00'}
+          value={value}
+          onChange={(e) => { setValue(formatCPF(e.target.value)); setError(null); }}
+        />
+        {ErrorMessage}
+        <button
+          className="td-slide-cta"
+          onClick={handleSubmit}
+          disabled={!value.trim()}
+          type="button"
+        >
+          Continuar
+        </button>
+        <span className="td-slide-cta-hint">
+          ou pressione <kbd>{branding?.slideEnterText || 'Enter'}</kbd>
+        </span>
+      </>
+    );
+  }
+
+  // --- REDIRECT ---
+  if (type === 'REDIRECT') {
+    return (
+      <div className="td-slide-options">
+        <button
+          className="td-slide-option"
+          onClick={() => {
+            if (config.url) window.open(config.url, '_blank');
+            onSubmit('Redirecionado');
+          }}
+          type="button"
+        >
+          {config.buttonText || 'Acessar Link'}
+        </button>
+      </div>
+    );
+  }
+
+  // --- INPUT_DATE (Iframe) ---
+  if (type === 'INPUT_DATE' && (config.calendarProvider === 'Calendly' || config.calendarProvider === 'Cal.com')) {
+    return <IframeCalendarInput block={block} onSubmit={onSubmit} />;
+  }
+
+  // --- INPUT_RATING ---
+  if (type === 'INPUT_RATING') {
+    const maxScore = config.maxScore || 5;
+    const options = Array.from({ length: maxScore === 10 ? 11 : maxScore }, (_, i) => maxScore === 10 ? i : i + 1);
+
+    return (
+      <div className="td-slide-options" style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+        {options.map((score) => (
+          <button
+            key={`${block.id}-rating-${score}`}
+            className="td-slide-option"
+            style={{ flex: 'none', padding: maxScore === 10 ? '1rem 1.5rem' : '1rem', minWidth: '60px' }}
+            onClick={() => onSubmit(score)}
+            type="button"
+          >
+            {maxScore === 5 ? '⭐' : score}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
   // --- Mapeamento de type → input HTML type ---
   const inputTypeMap = {
     INPUT_TEXT: 'text',
     INPUT_NUMBER: 'number',
-    INPUT_DATE: 'date',
+    INPUT_DATE: config.enableTime ? 'datetime-local' : 'date',
   };
 
   const htmlType = inputTypeMap[type] || 'text';
@@ -333,7 +468,7 @@ export default function SlideRenderer() {
   }, [currentBlock, handleSkip]);
 
   const canGoBack = currentStepIndex > 0;
-  const isInputBlock = currentBlock?.type?.startsWith('INPUT_');
+  const isInputBlock = currentBlock?.type?.startsWith('INPUT_') || currentBlock?.type === 'REDIRECT';
   const isAutoBlock = currentBlock && ['TEXT', 'WAIT'].includes(currentBlock.type);
   const isEndScreen = currentBlock?.type === 'END_SCREEN';
 

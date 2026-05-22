@@ -5,6 +5,14 @@ import 'react-phone-number-input/style.css';
 import { validateInput } from '../lib/validation.js';
 import './ChatRenderer.css';
 
+function formatCPF(value) {
+  const v = value.replace(/\D/g, '').slice(0, 11);
+  if (v.length <= 3) return v;
+  if (v.length <= 6) return `${v.slice(0, 3)}.${v.slice(3)}`;
+  if (v.length <= 9) return `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6)}`;
+  return `${v.slice(0, 3)}.${v.slice(3, 6)}.${v.slice(6, 9)}-${v.slice(9)}`;
+}
+
 // =============================================================================
 // SUB-COMPONENTE: Typing Indicator (3 pontos animados)
 // =============================================================================
@@ -51,18 +59,22 @@ function BlockInput({ block, onSubmit }) {
   useEffect(() => { setValue(''); setError(null); }, [block?.id]);
 
   const handleSubmit = useCallback(() => {
-    const trimmed = typeof value === 'string' ? value.trim() : value;
-    if (!trimmed && trimmed !== 0) return;
+    let finalValue = typeof value === 'string' ? value.trim() : value;
+    if (block?.type === 'INPUT_CPF') {
+      finalValue = typeof finalValue === 'string' ? finalValue.replace(/\D/g, '') : finalValue;
+    }
+
+    if (!finalValue && finalValue !== 0) return;
 
     // Validação rígida
-    const validation = validateInput(block?.type, value);
+    const validation = validateInput(block?.type, finalValue);
     if (!validation.valid) {
       setError(validation.message);
       return;
     }
 
     setError(null);
-    onSubmit(trimmed);
+    onSubmit(finalValue);
     setValue('');
   }, [value, onSubmit, block?.type]);
 
@@ -209,11 +221,89 @@ function BlockInput({ block, onSubmit }) {
     );
   }
 
+  // --- INPUT_CPF ---
+  if (type === 'INPUT_CPF') {
+    return (
+      <div className="td-chat-input-area">
+        <div className="td-chat-input-wrapper">
+          <input
+            ref={inputRef}
+            type="text"
+            className={`td-chat-input-field ${error ? 'td-chat-input-field--error' : ''}`}
+            placeholder={placeholder || '000.000.000-00'}
+            value={value}
+            onChange={(e) => { setValue(formatCPF(e.target.value)); setError(null); }}
+            onKeyDown={handleKeyDown}
+          />
+          {ErrorMessage}
+        </div>
+        <button
+          className="td-chat-send-btn"
+          onClick={handleSubmit}
+          disabled={!value.trim()}
+          type="button"
+          aria-label="Enviar"
+        >
+          ➤
+        </button>
+      </div>
+    );
+  }
+
+  // --- REDIRECT ---
+  if (type === 'REDIRECT') {
+    return (
+      <div className="td-chat-input-area">
+        <div className="td-chat-input-wrapper">
+          <button
+            className="td-chat-option-btn"
+            style={{ width: '100%', justifyContent: 'center' }}
+            onClick={() => {
+              if (config.url) {
+                window.open(config.url, '_blank');
+              }
+              onSubmit('Redirecionado');
+            }}
+            type="button"
+          >
+            {config.buttonText || 'Acessar Link'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // --- INPUT_RATING ---
+  if (type === 'INPUT_RATING') {
+    const maxScore = config.maxScore || 5;
+    const options = Array.from({ length: maxScore === 10 ? 11 : maxScore }, (_, i) => maxScore === 10 ? i : i + 1);
+
+    return (
+      <div className="td-chat-input-area">
+        <div className="td-chat-input-wrapper">
+          <div className="td-chat-options" style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'center' }}>
+            {options.map((score) => (
+              <button
+                key={`${block.id}-rating-${score}`}
+                className="td-chat-option-btn"
+                style={{ flex: 'none', padding: maxScore === 10 ? '0.5rem 0.8rem' : '0.5rem', minWidth: '40px', textAlign: 'center' }}
+                onClick={() => onSubmit(score)}
+                type="button"
+              >
+                {maxScore === 5 ? '⭐' : score}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // --- Mapeamento de type → input HTML type ---
   const inputTypeMap = {
     INPUT_TEXT: 'text',
     INPUT_NUMBER: 'number',
-    INPUT_DATE: 'date',
+    INPUT_DATE: config.enableTime ? 'datetime-local' : 'date',
   };
 
   const htmlType = inputTypeMap[type] || 'text';
@@ -245,6 +335,152 @@ function BlockInput({ block, onSubmit }) {
       </button>
     </div>
   );
+}
+
+function isInlineInteractive(block) {
+  if (!block) return false;
+  const { type, config = {} } = block;
+  if (['INPUT_BUTTONS', 'INPUT_SELECT', 'INPUT_RATING', 'REDIRECT'].includes(type)) return true;
+  if (type === 'INPUT_DATE' && (config.calendarProvider === 'Calendly' || config.calendarProvider === 'Cal.com')) return true;
+  return false;
+}
+
+// =============================================================================
+// SUB-COMPONENTE: IframeCalendarInput
+// =============================================================================
+function IframeCalendarInput({ block, onSubmit }) {
+  const { config = {} } = block;
+
+  useEffect(() => {
+    function handleMessage(e) {
+      let isSuccess = false;
+      if (config.calendarProvider === 'Calendly' && e.data?.event === 'calendly.event_scheduled') {
+        isSuccess = true;
+      } else if (config.calendarProvider === 'Cal.com') {
+        try {
+          const data = typeof e.data === 'string' ? JSON.parse(e.data) : e.data;
+          if (data?.type === 'cal:booking:success') {
+            isSuccess = true;
+          }
+        } catch (err) {}
+      }
+
+      if (isSuccess) {
+        window.removeEventListener('message', handleMessage);
+        onSubmit('Reunião Agendada');
+      }
+    }
+
+    window.addEventListener('message', handleMessage);
+    return () => window.removeEventListener('message', handleMessage);
+  }, [config.calendarProvider, onSubmit]);
+
+  if (!config.calendarUrl) {
+    return (
+      <div style={{ padding: '2rem', textAlign: 'center', color: '#888', backgroundColor: '#f8f9fa', borderRadius: '12px' }}>
+        <p>URL de agendamento não configurada.</p>
+        <button className="td-chat-option-btn" onClick={() => onSubmit('Sem resposta')} type="button" style={{marginTop: '1rem'}}>
+          Avançar
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <iframe
+      src={config.calendarUrl}
+      style={{ width: '100%', height: '600px', border: 'none', borderRadius: '12px' }}
+      title="Agendamento"
+    />
+  );
+}
+
+// =============================================================================
+// SUB-COMPONENTE: InlineInteractiveInput
+// =============================================================================
+function InlineInteractiveInput({ block, onSubmit }) {
+  if (!block) return null;
+  const { type, config = {} } = block;
+
+  if (type === 'INPUT_BUTTONS' || type === 'INPUT_SELECT') {
+    const options = config.options || config.buttons || [];
+    if (options.length === 0) {
+      return (
+        <div className="td-chat-inline-options">
+          <button className="td-chat-inline-btn" onClick={() => onSubmit('Sem resposta')} type="button">
+            Avançar
+          </button>
+        </div>
+      );
+    }
+    return (
+      <div className="td-chat-inline-options">
+        {options.map((opt, i) => {
+          const label = typeof opt === 'string' ? opt : opt.label;
+          const val = typeof opt === 'string' ? opt : (opt.value || opt.label);
+          return (
+            <button
+              key={`${block.id}-opt-${i}`}
+              className="td-chat-inline-btn"
+              onClick={() => onSubmit(val)}
+              type="button"
+            >
+              <span>{label}</span>
+              <span className="td-chat-inline-btn-arrow">→</span>
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (type === 'INPUT_RATING') {
+    const maxScore = config.maxScore || 5;
+    const options = Array.from({ length: maxScore === 10 ? 11 : maxScore }, (_, i) => maxScore === 10 ? i : i + 1);
+    return (
+      <div className="td-chat-inline-options td-chat-inline-options--row">
+        {options.map((score) => (
+          <button
+            key={`${block.id}-rating-${score}`}
+            className="td-chat-inline-btn"
+            style={{ padding: maxScore === 10 ? '0.5rem 0.8rem' : '0.5rem', minWidth: '40px', textAlign: 'center', width: 'auto', display: 'inline-block', justifyContent: 'center' }}
+            onClick={() => onSubmit(score)}
+            type="button"
+          >
+            {maxScore === 5 ? '⭐' : score}
+          </button>
+        ))}
+      </div>
+    );
+  }
+
+  if (type === 'REDIRECT') {
+    return (
+      <div className="td-chat-inline-options">
+        <button
+          className="td-chat-inline-btn"
+          onClick={() => {
+            if (config.url) window.open(config.url, '_blank');
+            onSubmit('Redirecionado');
+          }}
+          type="button"
+        >
+          <span>{config.buttonText || 'Acessar Link'}</span>
+          <span className="td-chat-inline-btn-arrow">→</span>
+        </button>
+      </div>
+    );
+  }
+
+  if (type === 'INPUT_DATE' && (config.calendarProvider === 'Calendly' || config.calendarProvider === 'Cal.com')) {
+    return (
+      <div className="td-chat-inline-options" style={{ width: '100%', padding: '0' }}>
+        <IframeCalendarInput block={block} onSubmit={onSubmit} />
+      </div>
+    );
+  }
+
+  return null;
 }
 
 // =============================================================================
@@ -338,7 +574,7 @@ export default function ChatRenderer() {
       const { type, config = {}, label } = block;
 
       // ---- Blocos invisíveis (pular sem mensagem) ----
-      if (type === 'WEBHOOK' || type === 'REDIRECT') {
+      if (type === 'WEBHOOK') {
         isProcessingRef.current = false;
         setProcessingIndex((prev) => prev + 1);
         return;
@@ -379,7 +615,7 @@ export default function ChatRenderer() {
           let idx = currentIndex + 1;
           while (idx < blocks.length) {
             const nextBlock = blocks[idx];
-            if (nextBlock.type === 'WEBHOOK' || nextBlock.type === 'REDIRECT') {
+            if (nextBlock.type === 'WEBHOOK') {
               idx++;
               continue;
             }
@@ -435,7 +671,7 @@ export default function ChatRenderer() {
       }
 
       // ---- INPUT_* (blocos que requerem resposta do utilizador) ----
-      if (type.startsWith('INPUT_')) {
+      if (type.startsWith('INPUT_') || type === 'REDIRECT') {
         setIsTyping(true);
         scrollToBottom();
 
@@ -560,12 +796,17 @@ export default function ChatRenderer() {
 
         {isTyping && <TypingIndicator />}
 
+        {/* --- INLINE INTERACTIVE INPUTS --- */}
+        {waitingForInput && currentInputBlock && isInlineInteractive(currentInputBlock) && (
+          <InlineInteractiveInput block={currentInputBlock} onSubmit={handleUserSubmit} />
+        )}
+
         {/* Scroll anchor */}
         <div ref={messagesEndRef} style={{ height: 1, flexShrink: 0 }} />
       </div>
 
-      {/* Input — só aparece quando esperando resposta do utilizador */}
-      {waitingForInput && currentInputBlock && (
+      {/* Input — só aparece quando esperando resposta do utilizador e NÃO é inline */}
+      {waitingForInput && currentInputBlock && !isInlineInteractive(currentInputBlock) && (
         <BlockInput
           block={currentInputBlock}
           onSubmit={handleUserSubmit}

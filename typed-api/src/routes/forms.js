@@ -244,6 +244,91 @@ export default async function formsRoutes(fastify) {
   });
 
   // ===========================================================================
+  // POST /workspaces/:workspaceId/forms/:formId/duplicate — Duplicar um form
+  // ===========================================================================
+  fastify.post('/workspaces/:workspaceId/forms/:formId/duplicate', {
+    schema: {
+      params: {
+        type: 'object',
+        required: ['workspaceId', 'formId'],
+        properties: {
+          workspaceId: { type: 'string' },
+          formId: { type: 'string' },
+        },
+      },
+    },
+  }, async (request, reply) => {
+    const { workspaceId, formId } = request.params;
+
+    await assertWorkspaceExists(workspaceId);
+    
+    // Busca o formulário original junto com seus blocos
+    const originalForm = await prisma.form.findFirst({
+      where: { id: formId, workspaceId },
+      include: {
+        blocks: {
+          orderBy: { order: 'asc' },
+        },
+      },
+    });
+
+    if (!originalForm) {
+      throw fastify.httpErrors.notFound(`Formulário '${formId}' não encontrado.`);
+    }
+
+    const newName = `${originalForm.name} (Cópia)`;
+    let finalSlug = slugify(newName);
+
+    // Garante unicidade do slug
+    const existingSlugs = await prisma.form.findMany({
+      where: { workspaceId, slug: { startsWith: finalSlug } },
+      select: { slug: true },
+    });
+
+    if (existingSlugs.length > 0) {
+      const slugSet = new Set(existingSlugs.map((f) => f.slug));
+      if (slugSet.has(finalSlug)) {
+        let counter = 2;
+        while (slugSet.has(`${finalSlug}-${counter}`)) {
+          counter++;
+        }
+        finalSlug = `${finalSlug}-${counter}`;
+      }
+    }
+
+    // Cria o novo formulário clonando propriedades e blocos
+    const form = await prisma.form.create({
+      data: {
+        name: newName,
+        slug: finalSlug,
+        description: originalForm.description,
+        displayMode: originalForm.displayMode,
+        branding: originalForm.branding || {},
+        settings: originalForm.settings || {},
+        workspaceId,
+        isPublished: false,
+        publishedBlocks: null,
+        hasUnpublishedChanges: true,
+        blocks: {
+          create: originalForm.blocks.map((block) => ({
+            type: block.type,
+            order: block.order,
+            config: block.config || {},
+            label: block.label,
+            required: block.required,
+          })),
+        },
+      },
+      include: {
+        blocks: true,
+      },
+    });
+
+    request.log.info({ originalFormId: formId, newFormId: form.id }, 'Formulário duplicado.');
+    return reply.code(201).send(form);
+  });
+
+  // ===========================================================================
   // GET /workspaces/:workspaceId/forms/:formId — Detalhes de um form
   // ===========================================================================
   // Retorna o form completo com seus blocos ordenados.

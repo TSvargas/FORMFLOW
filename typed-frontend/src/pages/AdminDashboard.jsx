@@ -4,7 +4,7 @@
 
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { getForms, createForm } from '../lib/api.js';
+import { getForms, createForm, duplicateForm } from '../lib/api.js';
 
 const WORKSPACE_ID = "ws-mock-123";
 
@@ -13,11 +13,11 @@ export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   
-  // Estado para o modal de criação
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newFormName, setNewFormName] = useState('');
   const [newFormMode, setNewFormMode] = useState('CHAT');
   const [isCreating, setIsCreating] = useState(false);
+  const [duplicatingId, setDuplicatingId] = useState(null);
 
   const navigate = useNavigate();
 
@@ -53,6 +53,21 @@ export default function AdminDashboard() {
     } catch (err) {
       alert(`Erro ao criar formulário: ${err.message}`);
       setIsCreating(false);
+    }
+  }
+
+  async function handleDuplicateForm(e, formId, formName) {
+    e.stopPropagation(); // Evita navegar para o form
+    if (!window.confirm(`Deseja duplicar o formulário "${formName}"?`)) return;
+
+    setDuplicatingId(formId);
+    try {
+      await duplicateForm(WORKSPACE_ID, formId);
+      await loadForms();
+    } catch (err) {
+      alert(`Erro ao duplicar formulário: ${err.message}`);
+    } finally {
+      setDuplicatingId(null);
     }
   }
 
@@ -101,13 +116,23 @@ export default function AdminDashboard() {
               <h3 style={styles.cardTitle}>{form.name}</h3>
               <p style={styles.cardUrl}>/f/{form.slug}</p>
               
-              <div style={styles.cardStats}>
-                <div style={styles.stat}>
-                  <strong>{form._count?.submissions || 0}</strong> leads
+              <div style={styles.cardFooter}>
+                <div style={styles.cardStats}>
+                  <div style={styles.stat}>
+                    <strong>{form._count?.submissions || 0}</strong> leads
+                  </div>
+                  <div style={styles.stat}>
+                    <strong>{form._count?.blocks || 0}</strong> blocos
+                  </div>
                 </div>
-                <div style={styles.stat}>
-                  <strong>{form._count?.blocks || 0}</strong> blocos
-                </div>
+                <button 
+                  style={styles.duplicateButton}
+                  onClick={(e) => handleDuplicateForm(e, form.id, form.name)}
+                  disabled={duplicatingId === form.id}
+                  title="Duplicar formulário"
+                >
+                  {duplicatingId === form.id ? '⏳' : '📄 Copiar'}
+                </button>
               </div>
             </div>
           ))}
@@ -288,17 +313,33 @@ const styles = {
     color: '#888',
     fontSize: '0.85rem',
   },
+  cardFooter: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    borderTop: '1px solid #eaeaea',
+    paddingTop: '1rem',
+  },
   cardStats: {
     display: 'flex',
     gap: '1rem',
-    borderTop: '1px solid #eaeaea',
-    paddingTop: '1rem',
     fontSize: '0.85rem',
     color: '#555',
   },
   stat: {
     display: 'flex',
-    flexDirection: 'column',
+    gap: '0.3rem',
+    alignItems: 'center',
+  },
+  duplicateButton: {
+    background: 'none',
+    border: '1px solid #eaeaea',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '0.8rem',
+    cursor: 'pointer',
+    color: '#555',
+    transition: 'background 0.2s',
   },
   modalOverlay: {
     position: 'fixed',

@@ -212,6 +212,13 @@ export function getFormDetails(workspaceId, formId, signal) {
   return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}`, { signal });
 }
 
+export function duplicateForm(workspaceId, formId, signal) {
+  return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}/duplicate`, {
+    method: 'POST',
+    signal,
+  });
+}
+
 export function createBlock(workspaceId, formId, payload, signal) {
   return apiFetch(`/api/workspaces/${workspaceId}/forms/${formId}/blocks`, {
     method: 'POST',
